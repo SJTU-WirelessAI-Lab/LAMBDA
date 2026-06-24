@@ -54,16 +54,16 @@ class PathTagTest(unittest.TestCase):
         root = Path(paths.trajectory_root())
         self.assertIn("Sunny", root.parts)
 
-    def test_array_and_subcarrier_dirs_are_csi_siblings(self):
-        array_dir = paths.array_csi_npz_dir(rx_shape=(1, 1), tx_shape=(4, 4))
-        subcarrier_dir = paths.subcarrier_csi_npz_dir(input_tag="single", profile_name="sub6_30k_1024")
+    def test_mimo_ofdm_csi_dir_is_csi_sibling(self):
+        output_dir = paths.mimo_ofdm_csi_npz_dir(
+            rx_shape=(1, 1),
+            tx_shape=(4, 4),
+            profile_name="sub6_30k_1024",
+        )
 
-        self.assertIn("/array_csi/", array_dir)
-        self.assertIn("/subcarrier_csi/", subcarrier_dir)
-        self.assertNotIn("csi_array", array_dir)
-        self.assertNotIn("csi_subcarrier", subcarrier_dir)
-        self.assertFalse(array_dir.endswith("multi_path_npz"))
-        self.assertFalse(subcarrier_dir.endswith("multi_path_npz"))
+        self.assertIn("/mimo_ofdm_csi/", output_dir)
+        self.assertIn("/rx1x1_tx4x4/sub6_30k_1024", output_dir)
+        self.assertFalse(output_dir.endswith("multi_path_npz"))
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ def infer_input_mode(arrays: dict[str, np.ndarray], input_mode: str = "auto") ->
     has_imag = "a_mimo_imag" in arrays
     if has_real != has_imag:
         missing = "a_mimo_imag" if has_real else "a_mimo_real"
-        raise KeyError(f"Missing array CSI field: {missing}")
+        raise KeyError(f"Missing MIMO CSI field: {missing}")
 
     if mode == "auto":
         return "array" if has_real else "single"

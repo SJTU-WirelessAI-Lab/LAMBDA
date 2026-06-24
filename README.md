@@ -4,7 +4,7 @@ Utility code for the LAMBDA low-altitude UAV multimodal dataset paper.
 
 This repository helps dataset users inspect released CSI files and run common
 post-processing steps used by the tutorials and paper experiments, including
-array/subcarrier CSI, radar signal synthesis, and radar visualization.
+MIMO OFDM CSI, radar signal synthesis, and radar visualization.
 
 - Website: https://www.lambda6g.net/
 - Documentation: https://www.lambda6g.net/documentation
@@ -16,7 +16,7 @@ array/subcarrier CSI, radar signal synthesis, and radar visualization.
 
 ```text
 lambda_rf/                 Python package and command line interface
-examples/                  Runnable CSI loading, label, and post-processing examples
+examples/                  Runnable CSI loading and label generation examples
 notebooks/                 Tutorial notebooks matching the website walkthroughs
 configs/scenarios.json     Example utility configuration
 scripts/                   CSI packaging helpers
@@ -63,7 +63,7 @@ is kept in this repository:
 
 ```text
 notebooks/00_load_csi.ipynb
-notebooks/01_array_and_subcarrier_csi.ipynb
+notebooks/01_mimo_ofdm_csi.ipynb
 notebooks/02_generate_radar_and_visualize.ipynb
 notebooks/03_beam_label_generation.ipynb
 notebooks/04_localization_rgb_depth_baseline.ipynb
@@ -93,22 +93,14 @@ python examples/generate_beam_labels.py \
   --codebook-shape 16,16
 ```
 
-Generate array/MIMO CSI from existing path-level CSI:
+Generate final MIMO OFDM CSI from existing path-level CSI:
 
 ```bash
-python -m lambda_rf array-csi \
+python -m lambda_rf mimo-ofdm-csi \
   --input-dir path/to/csi/f60p0GHz_V \
-  --output-dir path/to/derived_csi/array_csi/f60p0GHz_V/rx1x1_tx4x4 \
+  --output-dir path/to/derived_csi/mimo_ofdm_csi/f60p0GHz_V/rx1x1_tx4x4/sub6_30k_1024 \
   --tx-shape 4,4 \
-  --rx-shape 1,1
-```
-
-Generate OFDM-like subcarrier CSI:
-
-```bash
-python -m lambda_rf subcarrier-csi \
-  --input-dir path/to/csi/f60p0GHz_V \
-  --output-dir path/to/derived_csi/subcarrier_csi/f60p0GHz_V/single/sub6_30k_1024 \
+  --rx-shape 1,1 \
   --profile sub6_30k_1024
 ```
 
@@ -132,17 +124,6 @@ python -m lambda_rf radar-vis \
   --output-dir path/to/radar_vis/f60p0GHz_V
 ```
 
-Run both post-processing steps with one example script:
-
-```bash
-python examples/postprocess_existing_csi.py \
-  --input-dir path/to/csi/f60p0GHz_V \
-  --output-root path/to/derived_csi \
-  --tx-shape 4,4 \
-  --rx-shape 1,1 \
-  --profile sub6_30k_1024
-```
-
 The website tutorials provide the narrative walkthroughs that correspond to
 the notebooks:
 
@@ -158,8 +139,8 @@ The example configuration is:
 configs/scenarios.json
 ```
 
-It stores defaults used when a command needs an output-root convention, array
-shape, carrier-frequency tag, weather tag, subcarrier profile, radar settings,
+It stores defaults used when a command needs an output-root convention, MIMO
+shape, carrier-frequency tag, weather tag, OFDM profile, radar settings,
 and the bundled AirSim drone RCS model. Most public
 commands also accept explicit `--input-dir` and `--output-dir` arguments, which
 is the recommended path for downloaded CSI data.

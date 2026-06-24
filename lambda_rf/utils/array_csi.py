@@ -20,6 +20,21 @@ def validate_array_shape(shape: tuple[int, int] | list[int], name: str) -> tuple
     return rows, cols
 
 
+def parse_array_shape(
+    value: str | tuple[int, int] | list[int] | None,
+    default: tuple[int, int] | list[int],
+    name: str = "array_shape",
+) -> tuple[int, int]:
+    if value is None:
+        return validate_array_shape(default, name)
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.lower().replace("x", ",").split(",") if part.strip()]
+        if len(parts) != 2:
+            raise ValueError(f"Invalid {name} {value!r}; expected ROWS,COLS or ROWSxCOLS")
+        return validate_array_shape((int(parts[0]), int(parts[1])), name)
+    return validate_array_shape(value, name)
+
+
 def planar_array_positions(
     shape: tuple[int, int] | list[int],
     wavelength_m: float,
@@ -207,7 +222,7 @@ def build_array_csi_fields(
     tx_orientation_source: str | None = None,
     rx_orientation_source: str | None = None,
 ) -> dict[str, np.ndarray]:
-    """Expand single-link per-path CSI into far-field MIMO array CSI."""
+    """Expand single-link per-path CSI into far-field MIMO path coefficients."""
     tx_shape = validate_array_shape(tx_shape, "tx_shape")
     rx_shape = validate_array_shape(rx_shape, "rx_shape")
     if carrier_frequency_hz <= 0.0:

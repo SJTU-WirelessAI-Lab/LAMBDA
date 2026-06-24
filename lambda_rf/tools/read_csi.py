@@ -132,7 +132,7 @@ def load_csi_npz(npz_path: str | Path) -> dict[str, Any]:
     if "a_mimo_real" in arrays or "a_mimo_imag" in arrays:
         missing_mimo = [key for key in ("a_mimo_real", "a_mimo_imag") if key not in arrays]
         if missing_mimo:
-            raise KeyError(f"Missing array CSI field(s): {', '.join(missing_mimo)}")
+            raise KeyError(f"Missing MIMO CSI field(s): {', '.join(missing_mimo)}")
         if arrays["a_mimo_real"].shape != arrays["a_mimo_imag"].shape:
             raise ValueError(
                 f"a_mimo_real shape {arrays['a_mimo_real'].shape} "
@@ -142,7 +142,7 @@ def load_csi_npz(npz_path: str | Path) -> dict[str, Any]:
         if mimo_csi.ndim != 3:
             raise ValueError(f"a_mimo_* must have shape (rx_ant, tx_ant, path), got {mimo_csi.shape}")
         if mimo_csi.shape[-1] != num_paths:
-            raise ValueError(f"array CSI path count {mimo_csi.shape[-1]} != base CSI path count {num_paths}")
+            raise ValueError(f"MIMO CSI path count {mimo_csi.shape[-1]} != base CSI path count {num_paths}")
         mimo_power = np.abs(mimo_csi) ** 2
         summary.update(
             {
@@ -202,7 +202,7 @@ def print_file_summary(summary: dict[str, Any], top: int) -> None:
     print(f"Complex CSI shape: {summary['csi'].shape}")
     if "mimo_csi" in summary:
         rx_ant, tx_ant, _ = summary["mimo_shape"]
-        print(f"Array CSI shape: {summary['mimo_shape']} (rx_ant={rx_ant}, tx_ant={tx_ant}, paths={summary['num_paths']})")
+        print(f"MIMO CSI shape: {summary['mimo_shape']} (rx_ant={rx_ant}, tx_ant={tx_ant}, paths={summary['num_paths']})")
         if "rx_array_shape" in arrays:
             print(f"RX array shape: {arrays['rx_array_shape']}")
         if "tx_array_shape" in arrays:

@@ -185,3 +185,47 @@ def subcarrier_csi_npz_dir(
         num_subcarriers=num_subcarriers,
         subcarrier_spacing_hz=subcarrier_spacing_hz,
     )
+
+
+def mimo_ofdm_csi_output_dir(
+    pol: str | None = None,
+    weather: Any | None = None,
+    rx_shape: tuple[int, int] | list[int] | None = None,
+    tx_shape: tuple[int, int] | list[int] | None = None,
+    profile_name: str | None = None,
+    num_subcarriers: int | None = None,
+    subcarrier_spacing_hz: float | None = None,
+) -> str:
+    rx_shape = rx_shape or config.RX_ARRAY_SHAPE
+    tx_shape = tx_shape or config.TX_ARRAY_SHAPE
+    return os.path.join(
+        trajectory_root(),
+        "mimo_ofdm_csi",
+        make_csi_output_tag(pol=pol, weather=weather),
+        array_shape_tag(rx_shape=rx_shape, tx_shape=tx_shape),
+        subcarrier_profile_tag(
+            profile_name=profile_name,
+            num_subcarriers=num_subcarriers,
+            subcarrier_spacing_hz=subcarrier_spacing_hz,
+        ),
+    )
+
+
+def mimo_ofdm_csi_npz_dir(
+    pol: str | None = None,
+    weather: Any | None = None,
+    rx_shape: tuple[int, int] | list[int] | None = None,
+    tx_shape: tuple[int, int] | list[int] | None = None,
+    profile_name: str | None = None,
+    num_subcarriers: int | None = None,
+    subcarrier_spacing_hz: float | None = None,
+) -> str:
+    return mimo_ofdm_csi_output_dir(
+        pol=pol,
+        weather=weather,
+        rx_shape=rx_shape,
+        tx_shape=tx_shape,
+        profile_name=profile_name,
+        num_subcarriers=num_subcarriers,
+        subcarrier_spacing_hz=subcarrier_spacing_hz,
+    )

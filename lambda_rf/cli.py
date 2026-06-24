@@ -65,9 +65,10 @@ def run_read_csi(args: argparse.Namespace) -> None:
         write_csv(summary, args.csv)
 
 
-def run_array_csi(args: argparse.Namespace) -> None:
+def run_mimo_ofdm_csi(args: argparse.Namespace) -> None:
     _set_runtime_env(args)
-    from lambda_rf.generate_array_csi import run
+
+    from lambda_rf.generate_mimo_ofdm_csi import run
 
     run(
         input_dir=args.input_dir,
@@ -75,30 +76,14 @@ def run_array_csi(args: argparse.Namespace) -> None:
         tx_shape=args.tx_shape,
         rx_shape=args.rx_shape,
         spacing_wavelengths=args.spacing_wavelengths,
+        profile=args.profile,
+        num_subcarriers=args.num_subcarriers,
+        subcarrier_spacing_hz=args.subcarrier_spacing,
         skip_existing=args.skip_existing,
         start_frame=args.start_frame,
         limit=args.limit,
         tx_orientation_pose=args.tx_orientation_pose,
         rx_orientation_pose=args.rx_orientation_pose,
-    )
-
-
-def run_subcarrier_csi(args: argparse.Namespace) -> None:
-    _set_runtime_env(args)
-    from lambda_rf.generate_subcarrier_csi import run
-
-    run(
-        input_dir=args.input_dir,
-        output_dir=args.output_dir,
-        profile=args.profile,
-        num_subcarriers=args.num_subcarriers,
-        subcarrier_spacing_hz=args.subcarrier_spacing,
-        input_mode=args.input_mode,
-        tx_shape=args.tx_shape,
-        rx_shape=args.rx_shape,
-        skip_existing=args.skip_existing,
-        start_frame=args.start_frame,
-        limit=args.limit,
     )
 
 
@@ -165,39 +150,22 @@ def build_parser() -> argparse.ArgumentParser:
     read_csi_cmd.add_argument("--csv", default=None, help="Optional CSV output path.")
     read_csi_cmd.set_defaults(func=run_read_csi)
 
-    array_csi_cmd = sub.add_parser("array-csi", help="Expand path-level CSI into array/MIMO CSI.")
-    array_csi_cmd.add_argument("--scenario", help="Scenario key in configs/scenarios.json.")
-    array_csi_cmd.add_argument("--input-dir", required=True, help="Input directory containing csi_*.npz.")
-    array_csi_cmd.add_argument("--output-dir", help="Output directory for array csi_*.npz files.")
-    array_csi_cmd.add_argument("--tx-shape", help="TX array shape as ROWS,COLS or ROWSxCOLS. Defaults to config.")
-    array_csi_cmd.add_argument("--rx-shape", help="RX array shape as ROWS,COLS or ROWSxCOLS. Defaults to config.")
-    array_csi_cmd.add_argument("--spacing-wavelengths", type=float, default=0.5, help="Element spacing in wavelengths.")
-    array_csi_cmd.add_argument("--tx-orientation-pose", help="Pose JSON whose quaternion defines the TX array rotation.")
-    array_csi_cmd.add_argument("--rx-orientation-pose", help="Pose JSON whose quaternion defines the RX array rotation.")
-    array_csi_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")
-    array_csi_cmd.add_argument("--limit", type=int, help="Maximum number of files to process.")
-    array_csi_cmd.add_argument("--skip-existing", action="store_true", help="Skip output files that already exist.")
-    array_csi_cmd.set_defaults(func=run_array_csi)
-
-    subcarrier_csi_cmd = sub.add_parser("subcarrier-csi", help="Build OFDM-like subcarrier CSI from path CSI.")
-    subcarrier_csi_cmd.add_argument("--scenario", help="Scenario key in configs/scenarios.json.")
-    subcarrier_csi_cmd.add_argument("--input-dir", required=True, help="Input directory containing csi_*.npz.")
-    subcarrier_csi_cmd.add_argument("--output-dir", help="Output directory for subcarrier csi_*.npz files.")
-    subcarrier_csi_cmd.add_argument("--profile", help="Subcarrier profile name, for example sub6_30k_1024.")
-    subcarrier_csi_cmd.add_argument("--num-subcarriers", type=int, help="Override number of subcarriers.")
-    subcarrier_csi_cmd.add_argument("--subcarrier-spacing", type=float, help="Override subcarrier spacing in Hz.")
-    subcarrier_csi_cmd.add_argument(
-        "--input-mode",
-        choices=["auto", "single", "array"],
-        default="auto",
-        help="Use single-link or array path coefficients. Defaults to auto.",
-    )
-    subcarrier_csi_cmd.add_argument("--tx-shape", help="TX array shape used when locating default array CSI input.")
-    subcarrier_csi_cmd.add_argument("--rx-shape", help="RX array shape used when locating default array CSI input.")
-    subcarrier_csi_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")
-    subcarrier_csi_cmd.add_argument("--limit", type=int, help="Maximum number of files to process.")
-    subcarrier_csi_cmd.add_argument("--skip-existing", action="store_true", help="Skip output files that already exist.")
-    subcarrier_csi_cmd.set_defaults(func=run_subcarrier_csi)
+    mimo_ofdm_cmd = sub.add_parser("mimo-ofdm-csi", help="Generate final MIMO OFDM CSI from path-level CSI.")
+    mimo_ofdm_cmd.add_argument("--scenario", help="Scenario key in configs/scenarios.json.")
+    mimo_ofdm_cmd.add_argument("--input-dir", required=True, help="Input directory containing path-level csi_*.npz.")
+    mimo_ofdm_cmd.add_argument("--output-dir", help="Output directory for final MIMO OFDM csi_*.npz files.")
+    mimo_ofdm_cmd.add_argument("--tx-shape", help="TX MIMO array shape as ROWS,COLS or ROWSxCOLS. Defaults to config.")
+    mimo_ofdm_cmd.add_argument("--rx-shape", help="RX MIMO array shape as ROWS,COLS or ROWSxCOLS. Defaults to config.")
+    mimo_ofdm_cmd.add_argument("--spacing-wavelengths", type=float, default=0.5, help="MIMO element spacing in wavelengths.")
+    mimo_ofdm_cmd.add_argument("--tx-orientation-pose", help="Pose JSON whose quaternion defines the TX MIMO array rotation.")
+    mimo_ofdm_cmd.add_argument("--rx-orientation-pose", help="Pose JSON whose quaternion defines the RX MIMO array rotation.")
+    mimo_ofdm_cmd.add_argument("--profile", help="OFDM subcarrier profile name, for example sub6_30k_1024.")
+    mimo_ofdm_cmd.add_argument("--num-subcarriers", type=int, help="Override number of OFDM subcarriers.")
+    mimo_ofdm_cmd.add_argument("--subcarrier-spacing", type=float, help="Override OFDM subcarrier spacing in Hz.")
+    mimo_ofdm_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")
+    mimo_ofdm_cmd.add_argument("--limit", type=int, help="Maximum number of files to process.")
+    mimo_ofdm_cmd.add_argument("--skip-existing", action="store_true", help="Skip output files that already exist.")
+    mimo_ofdm_cmd.set_defaults(func=run_mimo_ofdm_csi)
 
     radar_cmd = sub.add_parser("radar", help="Generate FMCW radar cubes from released path-level CSI.")
     radar_cmd.add_argument("--scenario", help="Scenario key in configs/scenarios.json.")
