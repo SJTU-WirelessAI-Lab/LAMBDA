@@ -64,8 +64,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "bandwidth": 2.0e9,
             "sample_rate": 204.8e6,
             "chirp_duration": 40.0e-6,
+            "chirp_interval": 48.0e-6,
             "num_chirps": 64,
+            "add_noise": False,
             "noise_floor_dbm": -100.0,
+            "noise_figure_db": 6.0,
+            "noise_bandwidth_hz": None,
             "array_shape": [4, 4],
             "spacing_wavelengths": 0.5
         },
@@ -184,8 +188,24 @@ RADAR_SETTINGS = {
     "bandwidth": float(RADAR_CFG.get("bandwidth", 2.0e9)),
     "sample_rate": float(RADAR_CFG.get("sample_rate", 204.8e6)),
     "chirp_duration": float(RADAR_CFG.get("chirp_duration", 40.0e-6)),
+    "chirp_interval": (
+        None
+        if RADAR_CFG.get("chirp_interval") is None
+        else float(RADAR_CFG.get("chirp_interval"))
+    ),
     "num_chirps": int(RADAR_CFG.get("num_chirps", 64)),
-    "noise_floor_dbm": float(RADAR_CFG.get("noise_floor_dbm", -100.0)),
+    "add_noise": bool(RADAR_CFG.get("add_noise", False)),
+    "noise_floor_dbm": (
+        None
+        if RADAR_CFG.get("noise_floor_dbm", -100.0) is None
+        else float(RADAR_CFG.get("noise_floor_dbm", -100.0))
+    ),
+    "noise_figure_db": float(RADAR_CFG.get("noise_figure_db", 0.0)),
+    "noise_bandwidth_hz": (
+        None
+        if RADAR_CFG.get("noise_bandwidth_hz") is None
+        else float(RADAR_CFG.get("noise_bandwidth_hz"))
+    ),
 }
 RADAR_ARRAY_SHAPE = _shape_from_mapping(RADAR_CFG, "array_shape", (4, 4))
 RADAR_SPACING_WAVELENGTHS = float(RADAR_CFG.get("spacing_wavelengths", 0.5))

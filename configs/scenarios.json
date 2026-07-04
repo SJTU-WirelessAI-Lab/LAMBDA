@@ -19,8 +19,12 @@
       "bandwidth": 2000000000.0,
       "sample_rate": 204800000.0,
       "chirp_duration": 0.00004,
+      "chirp_interval": 0.000048,
       "num_chirps": 64,
+      "add_noise": false,
       "noise_floor_dbm": -100.0,
+      "noise_figure_db": 6.0,
+      "noise_bandwidth_hz": null,
       "array_shape": [4, 4],
       "spacing_wavelengths": 0.5
     },

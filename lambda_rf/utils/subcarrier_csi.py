@@ -107,6 +107,24 @@ def frequency_response_from_paths(
     return np.sum(coeffs[..., :, np.newaxis] * phase, axis=-2)
 
 
+def frequency_response_from_array_paths(
+    path_coefficients: np.ndarray,
+    tau_s: np.ndarray,
+    subcarrier_offsets_hz: np.ndarray,
+) -> np.ndarray:
+    """Sum array path coefficients using one delay per RX/TX/path coefficient."""
+    coeffs = np.asarray(path_coefficients, dtype=np.complex128)
+    tau = np.asarray(tau_s, dtype=np.float64)
+    offsets = np.asarray(subcarrier_offsets_hz, dtype=np.float64).reshape(-1)
+    if coeffs.shape != tau.shape:
+        raise ValueError(f"array path coefficient shape {coeffs.shape} != tau_mimo shape {tau.shape}")
+    if coeffs.ndim < 1:
+        raise ValueError("array path coefficients must include a path dimension")
+
+    phase = np.exp(-1j * 2.0 * np.pi * tau[..., :, np.newaxis] * offsets)
+    return np.sum(coeffs[..., :, np.newaxis] * phase, axis=-2)
+
+
 def build_subcarrier_csi_fields(
     arrays: dict[str, np.ndarray],
     num_subcarriers: int,
@@ -126,15 +144,26 @@ def build_subcarrier_csi_fields(
     num_paths = int(path_coefficients.shape[-1])
     valid = arrays.get("valid")
     valid_mask = path_valid_mask(valid, num_paths)
-    tau = _path_delays(arrays, valid, num_paths)
-    if np.any(valid_mask & (tau < 0.0)):
-        raise ValueError("tau must be >= 0 for valid paths")
 
     if num_paths:
         path_coefficients = path_coefficients * valid_mask.reshape((1,) * (path_coefficients.ndim - 1) + (num_paths,))
 
     offsets = centered_subcarrier_offsets(num, spacing)
-    h_freq = frequency_response_from_paths(path_coefficients, tau, offsets)
+    if mode == "array" and "tau_mimo" in arrays:
+        tau_mimo = np.asarray(arrays["tau_mimo"], dtype=np.float64)
+        if tau_mimo.shape != path_coefficients.shape:
+            raise ValueError(f"tau_mimo shape {tau_mimo.shape} != a_mimo shape {path_coefficients.shape}")
+        valid_broadcast = valid_mask.reshape((1,) * (tau_mimo.ndim - 1) + (num_paths,))
+        if np.any(valid_broadcast & (tau_mimo < 0.0)):
+            raise ValueError("tau_mimo must be >= 0 for valid paths")
+        h_freq = frequency_response_from_array_paths(path_coefficients, tau_mimo, offsets)
+        response_model = "array_pair_path_delay_phase_from_snapshot"
+    else:
+        tau = _path_delays(arrays, valid, num_paths)
+        if np.any(valid_mask & (tau < 0.0)):
+            raise ValueError("tau must be >= 0 for valid paths")
+        h_freq = frequency_response_from_paths(path_coefficients, tau, offsets)
+        response_model = "path_delay_phase_from_snapshot"
 
     carrier_values = np.asarray(_required_array(arrays, "carrier_frequency"), dtype=np.float64).reshape(-1)
     if carrier_values.size != 1:
@@ -156,7 +185,7 @@ def build_subcarrier_csi_fields(
         "subcarrier_input_mode": np.asarray(mode),
         "subcarrier_index_order": np.asarray("centered_dc_at_floor_n_over_2"),
         "subcarrier_profile": np.asarray(profile),
-        "frequency_response_model": np.asarray("path_delay_phase_from_snapshot"),
+        "frequency_response_model": np.asarray(response_model),
     }
 
 

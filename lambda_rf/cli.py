@@ -84,6 +84,7 @@ def run_mimo_ofdm_csi(args: argparse.Namespace) -> None:
         limit=args.limit,
         tx_orientation_pose=args.tx_orientation_pose,
         rx_orientation_pose=args.rx_orientation_pose,
+        array_model=args.array_model,
     )
 
 
@@ -99,14 +100,19 @@ def run_radar(args: argparse.Namespace) -> None:
         bandwidth_hz=args.bandwidth,
         sample_rate_hz=args.sample_rate,
         chirp_duration_s=args.chirp_duration,
+        chirp_interval_s=args.chirp_interval,
+        idle_time_s=args.idle_time,
         num_chirps=args.num_chirps,
         noise_floor_dbm=args.noise_floor_dbm,
+        noise_figure_db=args.noise_figure_db,
+        noise_bandwidth_hz=args.noise_bandwidth,
         array_shape=args.array_shape,
         spacing_wavelengths=args.spacing_wavelengths,
         radar_yaw_deg=args.radar_yaw,
         radar_pitch_deg=args.radar_pitch,
         radar_roll_deg=args.radar_roll,
         add_noise=args.add_noise,
+        array_model=args.array_model,
         skip_existing=args.skip_existing,
         start_frame=args.start_frame,
         limit=args.limit,
@@ -159,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
     mimo_ofdm_cmd.add_argument("--spacing-wavelengths", type=float, default=0.5, help="MIMO element spacing in wavelengths.")
     mimo_ofdm_cmd.add_argument("--tx-orientation-pose", help="Pose JSON whose quaternion defines the TX MIMO array rotation.")
     mimo_ofdm_cmd.add_argument("--rx-orientation-pose", help="Pose JSON whose quaternion defines the RX MIMO array rotation.")
+    mimo_ofdm_cmd.add_argument(
+        "--array-model",
+        choices=["far-field", "spherical-wave"],
+        default="far-field",
+        help="Array wavefront model. spherical-wave uses per-element path lengths from CSI vertices.",
+    )
     mimo_ofdm_cmd.add_argument("--profile", help="OFDM subcarrier profile name, for example sub6_30k_1024.")
     mimo_ofdm_cmd.add_argument("--num-subcarriers", type=int, help="Override number of OFDM subcarriers.")
     mimo_ofdm_cmd.add_argument("--subcarrier-spacing", type=float, help="Override OFDM subcarrier spacing in Hz.")
@@ -176,14 +188,24 @@ def build_parser() -> argparse.ArgumentParser:
     radar_cmd.add_argument("--bandwidth", type=float, help="FMCW bandwidth in Hz.")
     radar_cmd.add_argument("--sample-rate", type=float, help="ADC sample rate in Hz.")
     radar_cmd.add_argument("--chirp-duration", type=float, help="Chirp duration in seconds.")
+    radar_cmd.add_argument("--chirp-interval", type=float, help="Chirp-to-chirp interval/PRI in seconds.")
+    radar_cmd.add_argument("--idle-time", type=float, help="Idle gap after each chirp in seconds. Ignored when --chirp-interval is set.")
     radar_cmd.add_argument("--num-chirps", type=int, help="Number of chirps per frame.")
     radar_cmd.add_argument("--noise-floor-dbm", type=float, help="Noise floor in dBm.")
+    radar_cmd.add_argument("--noise-figure-db", type=float, help="Receiver noise figure in dB when thermal noise is derived.")
+    radar_cmd.add_argument("--noise-bandwidth", type=float, help="Noise bandwidth in Hz. Defaults to sample rate.")
     radar_cmd.add_argument("--array-shape", help="Radar virtual array shape as ROWS,COLS or ROWSxCOLS.")
     radar_cmd.add_argument("--spacing-wavelengths", type=float, help="Array spacing in wavelengths.")
     radar_cmd.add_argument("--radar-yaw", type=float, help="Radar mount yaw in degrees.")
     radar_cmd.add_argument("--radar-pitch", type=float, help="Radar mount pitch in degrees.")
     radar_cmd.add_argument("--radar-roll", type=float, help="Radar mount roll in degrees.")
-    radar_cmd.add_argument("--add-noise", action="store_true", help="Add complex Gaussian receiver noise.")
+    radar_cmd.add_argument(
+        "--array-model",
+        choices=["far-field", "spherical-wave"],
+        default="far-field",
+        help="Radar array wavefront model. spherical-wave uses per-antenna path lengths from CSI vertices.",
+    )
+    radar_cmd.add_argument("--add-noise", action="store_true", default=None, help="Add complex Gaussian receiver noise.")
     radar_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")
     radar_cmd.add_argument("--limit", type=int, help="Maximum number of files to process.")
     radar_cmd.add_argument("--frame-step", type=int, default=1, help="Process every Nth CSI file.")

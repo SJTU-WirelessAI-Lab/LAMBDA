@@ -9,7 +9,12 @@ from typing import Any
 
 import numpy as np
 
-from lambda_rf.utils.array_csi import quaternion_xyzw_to_rotation_matrix
+from lambda_rf.utils.array_csi import (
+    ARRAY_MODEL_FAR_FIELD,
+    ARRAY_MODEL_SPHERICAL,
+    normalize_array_model,
+    quaternion_xyzw_to_rotation_matrix,
+)
 
 
 C_M_S = 299_792_458.0
@@ -183,9 +188,12 @@ class RadarSystem:
     f_c: float
     bandwidth: float = 2.0e9
     chirp_duration: float = 40.0e-6
+    chirp_interval: float | None = None
     num_chirps: int = 64
     sample_rate: float = 204.8e6
-    noise_floor_dbm: float = -100.0
+    noise_floor_dbm: float | None = -100.0
+    noise_figure_db: float = 0.0
+    noise_bandwidth_hz: float | None = None
 
     def __post_init__(self) -> None:
         if self.f_c <= 0.0:
@@ -194,6 +202,8 @@ class RadarSystem:
             raise ValueError("bandwidth must be > 0")
         if self.chirp_duration <= 0.0:
             raise ValueError("chirp_duration must be > 0")
+        if self.effective_chirp_interval < self.chirp_duration:
+            raise ValueError("chirp_interval must be >= chirp_duration")
         if self.num_chirps <= 0:
             raise ValueError("num_chirps must be > 0")
         if self.sample_rate <= 0.0:
@@ -204,6 +214,14 @@ class RadarSystem:
         return C_M_S / self.f_c
 
     @property
+    def effective_chirp_interval(self) -> float:
+        return float(self.chirp_duration if self.chirp_interval is None else self.chirp_interval)
+
+    @property
+    def idle_time(self) -> float:
+        return self.effective_chirp_interval - self.chirp_duration
+
+    @property
     def num_samples(self) -> int:
         return int(round(self.chirp_duration * self.sample_rate))
 
@@ -212,13 +230,33 @@ class RadarSystem:
         return self.bandwidth / self.chirp_duration
 
     @property
+    def effective_noise_bandwidth_hz(self) -> float:
+        return float(self.noise_bandwidth_hz or self.sample_rate)
+
+    @property
+    def noise_floor_effective_dbm(self) -> float:
+        if self.noise_floor_dbm is not None:
+            return float(self.noise_floor_dbm)
+        return -174.0 + 10.0 * math.log10(self.effective_noise_bandwidth_hz) + float(self.noise_figure_db)
+
+    @property
+    def noise_power_w(self) -> float:
+        return 10.0 ** ((self.noise_floor_effective_dbm - 30.0) / 10.0)
+
+    @property
     def noise_std(self) -> float:
-        noise_w = 10.0 ** (self.noise_floor_dbm / 10.0) * 1e-3
-        return math.sqrt(noise_w / 2.0)
+        return math.sqrt(self.noise_power_w / 2.0)
 
     def params_array(self) -> np.ndarray:
         return np.asarray(
-            [self.f_c, self.slope, self.sample_rate, self.chirp_duration, self.num_samples],
+            [
+                self.f_c,
+                self.slope,
+                self.sample_rate,
+                self.chirp_duration,
+                self.num_samples,
+                self.effective_chirp_interval,
+            ],
             dtype=np.float64,
         )
 
@@ -251,6 +289,16 @@ def load_csi_paths(npz_path: str | Path, fallback_carrier_frequency_hz: float | 
     if not np.any(mask):
         return None
 
+    def mask_path_array(key: str) -> np.ndarray | None:
+        if key not in arrays:
+            return None
+        value = np.asarray(arrays[key])
+        if value.shape[-1:] == (num_paths,):
+            return value[..., mask]
+        if value.ndim >= 2 and value.shape[-2:] == (num_paths, 3):
+            return value[..., mask, :]
+        return value
+
     result: dict[str, Any] = {
         "a": a_complex[mask],
         "tau": _required(arrays, "tau", path).reshape(-1)[mask].astype(np.float64),
@@ -262,6 +310,11 @@ def load_csi_paths(npz_path: str | Path, fallback_carrier_frequency_hz: float | 
         "num_paths": int(np.count_nonzero(mask)),
         "uav_pos": arrays.get("uav_pos"),
         "uav_vel": arrays.get("uav_vel"),
+        "tx_pos": arrays.get("tx_pos"),
+        "interactions": mask_path_array("interactions"),
+        "vertices": mask_path_array("vertices"),
+        "objects": mask_path_array("objects"),
+        "primitives": mask_path_array("primitives"),
         "timestamp": float(np.asarray(arrays.get("t", arrays.get("timestamp", 0.0))).reshape(-1)[0]),
         "carrier_frequency": float(
             np.asarray(arrays.get("carrier_frequency", fallback_carrier_frequency_hz or 0.0)).reshape(-1)[0]
@@ -277,6 +330,129 @@ def _direction_vectors(theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     return np.stack([sin_theta * np.cos(phi), sin_theta * np.sin(phi), np.cos(theta)], axis=1)
 
 
+def _position3(value: Any, name: str) -> np.ndarray:
+    if value is None:
+        raise KeyError(f"spherical-wave radar model requires {name}")
+    position = np.asarray(value, dtype=np.float64).reshape(-1)
+    if position.shape != (3,):
+        raise ValueError(f"{name} must contain exactly 3 coordinates, got shape {np.asarray(value).shape}")
+    if not np.all(np.isfinite(position)):
+        raise ValueError(f"{name} contains non-finite coordinates")
+    return position
+
+
+def _representative_path_steps(values: Any, num_paths: int, vector_dim: int | None = None) -> np.ndarray | None:
+    if values is None:
+        return None
+    arr = np.asarray(values)
+    if arr.size == 0:
+        if vector_dim is None:
+            return np.zeros((0, num_paths), dtype=arr.dtype)
+        return np.zeros((0, num_paths, vector_dim), dtype=np.float64)
+    if vector_dim is None:
+        if arr.shape[-1] != num_paths:
+            raise ValueError(f"path-step array must end with path dimension {num_paths}, got {arr.shape}")
+        if arr.ndim == 1:
+            return arr.reshape(1, num_paths)
+        if arr.ndim == 2:
+            return arr
+        steps = arr.shape[0]
+        flat = arr.reshape(steps, int(np.prod(arr.shape[1:-1])), num_paths)
+        out = flat[:, 0, :].copy()
+        for step_idx in range(steps):
+            for path_idx in range(num_paths):
+                nonzero = np.flatnonzero(flat[step_idx, :, path_idx] != 0)
+                if nonzero.size:
+                    out[step_idx, path_idx] = flat[step_idx, nonzero[0], path_idx]
+        return out
+
+    arr = np.asarray(arr, dtype=np.float64)
+    if arr.ndim < 3 or arr.shape[-2:] != (num_paths, vector_dim):
+        raise ValueError(f"vertex array must have shape (..., {num_paths}, {vector_dim}), got {arr.shape}")
+    if arr.ndim == 3:
+        return arr
+    steps = arr.shape[0]
+    flat = arr.reshape(steps, int(np.prod(arr.shape[1:-2])), num_paths, vector_dim)
+    out = np.full((steps, num_paths, vector_dim), np.nan, dtype=np.float64)
+    finite = np.all(np.isfinite(flat), axis=-1)
+    for step_idx in range(steps):
+        for path_idx in range(num_paths):
+            rows = np.flatnonzero(finite[step_idx, :, path_idx])
+            if rows.size:
+                out[step_idx, path_idx, :] = flat[step_idx, rows[0], path_idx, :]
+    return out
+
+
+def _vertices_for_path(vertices: np.ndarray | None, interactions: np.ndarray | None, path_idx: int) -> np.ndarray:
+    if vertices is None:
+        if interactions is not None and np.any(interactions[:, path_idx] != 0):
+            raise ValueError("spherical-wave radar model requires vertices for NLOS paths")
+        return np.zeros((0, 3), dtype=np.float64)
+
+    path_vertices = vertices[:, path_idx, :]
+    finite = np.all(np.isfinite(path_vertices), axis=1)
+    if interactions is not None and interactions.shape[0] == path_vertices.shape[0]:
+        mask = finite & (interactions[:, path_idx] != 0)
+    else:
+        mask = finite
+    selected = path_vertices[mask]
+    if interactions is not None and np.any(interactions[:, path_idx] != 0) and selected.size == 0:
+        raise ValueError("spherical-wave radar model found an NLOS path without finite vertices")
+    return selected
+
+
+def radar_one_way_tau_by_antenna(
+    csi_data: dict[str, Any],
+    antenna_positions_m: np.ndarray,
+    radar_world_to_local: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return one-way path delay per radar antenna and path for spherical-wave synthesis."""
+    tau = np.asarray(csi_data["tau"], dtype=np.float64).reshape(-1)
+    num_paths = tau.size
+    ant_local = np.asarray(antenna_positions_m, dtype=np.float64)
+    if ant_local.ndim != 2 or ant_local.shape[1] != 3:
+        raise ValueError(f"antenna_positions_m must have shape (num_ant, 3), got {ant_local.shape}")
+
+    tx_center = _position3(csi_data.get("tx_pos"), "tx_pos")
+    uav_pos = _position3(csi_data.get("uav_pos"), "uav_pos")
+    if radar_world_to_local is not None:
+        rotation = np.asarray(radar_world_to_local, dtype=np.float64)
+        if rotation.shape != (3, 3):
+            raise ValueError("radar_world_to_local must have shape (3, 3)")
+        ant_world = ant_local @ rotation
+    else:
+        ant_world = ant_local
+    ant_abs = tx_center[np.newaxis, :] + ant_world
+
+    interactions = _representative_path_steps(csi_data.get("interactions"), num_paths)
+    vertices = _representative_path_steps(csi_data.get("vertices"), num_paths, vector_dim=3)
+
+    out = np.zeros((ant_abs.shape[0], num_paths), dtype=np.float64)
+    for path_idx in range(num_paths):
+        path_vertices = _vertices_for_path(vertices, interactions, path_idx)
+        if path_vertices.shape[0] == 0:
+            center_length = float(np.linalg.norm(uav_pos - tx_center))
+            element_lengths = np.linalg.norm(uav_pos[np.newaxis, :] - ant_abs, axis=1)
+        else:
+            first_vertex = path_vertices[0]
+            last_vertex = path_vertices[-1]
+            middle_length = (
+                float(np.sum(np.linalg.norm(np.diff(path_vertices, axis=0), axis=1)))
+                if path_vertices.shape[0] > 1
+                else 0.0
+            )
+            center_length = (
+                float(np.linalg.norm(first_vertex - tx_center))
+                + middle_length
+                + float(np.linalg.norm(uav_pos - last_vertex))
+            )
+            element_lengths = np.linalg.norm(first_vertex[np.newaxis, :] - ant_abs, axis=1) + middle_length + float(
+                np.linalg.norm(uav_pos - last_vertex)
+            )
+        out[:, path_idx] = tau[path_idx] + (element_lengths - center_length) / C_M_S
+    return out
+
+
 def synthesize_radar_cube(
     csi_data: dict[str, Any],
     uav_rotation_l2w: np.ndarray,
@@ -284,9 +460,11 @@ def synthesize_radar_cube(
     radar_system: RadarSystem,
     antenna_positions_m: np.ndarray,
     radar_world_to_local: np.ndarray | None = None,
+    array_model: str = ARRAY_MODEL_FAR_FIELD,
     add_noise: bool = False,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
+    model = normalize_array_model(array_model)
     a_path = np.asarray(csi_data["a"], dtype=np.complex128).reshape(-1)
     tau = np.asarray(csi_data["tau"], dtype=np.float64).reshape(-1)
     doppler = np.asarray(csi_data["doppler"], dtype=np.float64).reshape(-1)
@@ -314,35 +492,51 @@ def synthesize_radar_cube(
     phi_deg = np.degrees(np.arctan2(body_dirs[:, 1], body_dirs[:, 0]))
     rcs_values = np.asarray([rcs_model.get_rcs(t, p) for t, p in zip(theta_deg, phi_deg)], dtype=np.complex128)
 
-    tx_dirs_world = _direction_vectors(theta_t, phi_t)
     if radar_world_to_local is not None:
         radar_world_to_local = np.asarray(radar_world_to_local, dtype=np.float64)
         if radar_world_to_local.shape != (3, 3):
             raise ValueError("radar_world_to_local must have shape (3, 3)")
-        radar_dirs = tx_dirs_world @ radar_world_to_local.T
-    else:
-        radar_dirs = tx_dirs_world
 
     coeff = (a_path ** 2) * np.sqrt(rcs_values)
-    two_way_tau = 2.0 * tau
+    if model == ARRAY_MODEL_SPHERICAL:
+        two_way_tau = 2.0 * radar_one_way_tau_by_antenna(
+            csi_data=csi_data,
+            antenna_positions_m=ant_pos,
+            radar_world_to_local=radar_world_to_local,
+        )
+        array_sv = None
+    else:
+        tx_dirs_world = _direction_vectors(theta_t, phi_t)
+        radar_dirs = tx_dirs_world @ radar_world_to_local.T if radar_world_to_local is not None else tx_dirs_world
+        two_way_tau = 2.0 * tau
+        k_wave = 2.0 * np.pi / radar_system.lambda_c
+        array_sv = np.exp(1j * k_wave * (ant_pos @ radar_dirs.T))
     two_way_doppler = 2.0 * doppler
 
-    k_wave = 2.0 * np.pi / radar_system.lambda_c
-    array_sv = np.exp(1j * k_wave * (ant_pos @ radar_dirs.T))
-
-    t_fast = np.linspace(0.0, radar_system.chirp_duration, radar_system.num_samples, endpoint=False)
-    t_slow = np.arange(radar_system.num_chirps, dtype=np.float64) * radar_system.chirp_duration
+    t_fast = np.arange(radar_system.num_samples, dtype=np.float64) / radar_system.sample_rate
+    t_slow = np.arange(radar_system.num_chirps, dtype=np.float64) * radar_system.effective_chirp_interval
     fast_grid, slow_grid = np.meshgrid(t_fast, t_slow)
 
     cube = np.zeros((ant_pos.shape[0], radar_system.num_chirps, radar_system.num_samples), dtype=np.complex128)
     for path_idx in range(num_paths):
-        phase = (
-            -2.0 * np.pi * radar_system.slope * two_way_tau[path_idx] * fast_grid
-            + 2.0 * np.pi * two_way_doppler[path_idx] * slow_grid
-            - 2.0 * np.pi * radar_system.f_c * two_way_tau[path_idx]
-        )
-        base = coeff[path_idx] * np.exp(1j * phase)
-        cube += array_sv[:, path_idx][:, None, None] * base[None, :, :]
+        if model == ARRAY_MODEL_SPHERICAL:
+            tau_path = two_way_tau[:, path_idx]
+            phase = (
+                -2.0 * np.pi * radar_system.slope * tau_path[:, np.newaxis, np.newaxis] * fast_grid
+                + 2.0 * np.pi * two_way_doppler[path_idx] * slow_grid
+                - 2.0 * np.pi * radar_system.f_c * tau_path[:, np.newaxis, np.newaxis]
+            )
+            base = coeff[path_idx] * np.exp(1j * phase)
+            cube += base
+        else:
+            tau_path = two_way_tau[path_idx]
+            phase = (
+                -2.0 * np.pi * radar_system.slope * tau_path * fast_grid
+                + 2.0 * np.pi * two_way_doppler[path_idx] * slow_grid
+                - 2.0 * np.pi * radar_system.f_c * tau_path
+            )
+            base = coeff[path_idx] * np.exp(1j * phase)
+            cube += array_sv[:, path_idx][:, None, None] * base[None, :, :]
 
     if add_noise:
         rng = rng or np.random.default_rng()

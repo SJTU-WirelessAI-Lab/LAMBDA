@@ -91,8 +91,11 @@ f60p0GHz_V_snow_gunn_east_dry_R2p0mmh_lwe_gas_p676
 
 ## MIMO OFDM CSI
 
-`mimo-ofdm-csi` expands released path-level CSI into far-field MIMO path
-coefficients and then builds OFDM frequency-domain CSI in the same output file.
+`mimo-ofdm-csi` expands released path-level CSI into MIMO path coefficients and
+then builds OFDM frequency-domain CSI in the same output file. The default
+array model is far-field plane-wave steering. The optional
+`--array-model spherical-wave` mode uses path vertices to synthesize near-field
+phase and delay differences for each antenna pair.
 
 ```bash
 python -m lambda_rf mimo-ofdm-csi \
@@ -112,6 +115,7 @@ Useful options:
 | `--spacing-wavelengths` | MIMO element spacing in carrier wavelengths, default `0.5`. |
 | `--tx-orientation-pose` | Pose JSON whose quaternion rotates TX local MIMO coordinates into the world frame. |
 | `--rx-orientation-pose` | Pose JSON whose quaternion rotates RX local MIMO coordinates into the world frame. |
+| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for path-vertex near-field phases and delays. |
 | `--profile NAME` | Use a named OFDM subcarrier profile. |
 | `--num-subcarriers N` | Override profile subcarrier count. |
 | `--subcarrier-spacing HZ` | Override profile subcarrier spacing in Hz. |
@@ -148,6 +152,10 @@ Added NPZ fields:
 | `rx_array_rotation` / `tx_array_rotation` | `(3, 3)` | Local-to-world rotation matrix. |
 | `rx_array_shape` / `tx_array_shape` | `(2,)` | `[rows, cols]`. |
 | `array_spacing_wavelengths` | scalar | Element spacing in wavelengths. |
+| `array_model` | scalar string | `far_field_steering_from_single_link_with_optional_orientation` or `spherical_wavefront_from_path_vertices`. |
+| `tau_mimo` | `(rx_ant, tx_ant, path)` when spherical-wave is used | Per-antenna-pair path delay. |
+| `path_length_mimo` | `(rx_ant, tx_ant, path)` when spherical-wave is used | Per-antenna-pair geometric path length. |
+| `near_field_reference` / `near_field_spreading` | scalar string when spherical-wave is used | Reference delay and amplitude convention metadata. |
 | `source_csi_path` | scalar string | Source path-level CSI file path. |
 | `h_freq_real` / `h_freq_imag` | `(subcarrier,)`, `(rx_ant, tx_ant, subcarrier)`, or compatible batch shape | Frequency-domain CSI. |
 | `subcarrier_frequencies_hz` | `(subcarrier,)` | Baseband frequency offset of each subcarrier. |
@@ -157,6 +165,10 @@ Added NPZ fields:
 | `subcarrier_profile` | scalar string | Profile name or generated profile tag. |
 | `source_mimo_ofdm_input_path` | scalar string | Input file used by final MIMO OFDM generation. |
 | `csi_product` | scalar string | `mimo_ofdm`. |
+
+Spherical-wave mode requires path-level CSI files that include `vertices`,
+`interactions`, `tx_pos`, and `uav_pos`. Files without path vertices can still
+be processed with the default far-field model.
 
 ## CSI Reader
 
@@ -193,6 +205,11 @@ python -m lambda_rf radar \
   --imu-dir path/to/imu
 ```
 
+The same defaults can be stored under `common.radar` in
+`configs/scenarios.json`, including `bandwidth`, `sample_rate`,
+`chirp_duration`, `chirp_interval`, `add_noise`, noise parameters, and
+`array_shape`.
+
 Useful options:
 
 | Option | Meaning |
@@ -201,19 +218,34 @@ Useful options:
 | `--bandwidth` | FMCW bandwidth in Hz. |
 | `--sample-rate` | ADC sample rate in Hz. |
 | `--chirp-duration` | Chirp duration in seconds. |
+| `--chirp-interval` | Chirp-to-chirp interval/PRI in seconds, including idle gap. |
+| `--idle-time` | Idle gap after each chirp in seconds; ignored when `--chirp-interval` is set. |
 | `--num-chirps` | Number of chirps per frame. |
+| `--noise-floor-dbm` | Receiver noise floor in dBm. Use config `null` to derive thermal noise from bandwidth and noise figure. |
+| `--noise-figure-db` | Receiver noise figure in dB when thermal noise is derived. |
+| `--noise-bandwidth` | Noise bandwidth in Hz. Defaults to the ADC sample rate. |
+| `--add-noise` | Add complex Gaussian receiver noise before the range FFT. |
 | `--array-shape` | Radar virtual array shape, default `4,4`. |
 | `--radar-yaw`, `--radar-pitch`, `--radar-roll` | Radar mount orientation in degrees. |
+| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for per-antenna near-field delays from CSI vertices. |
 
 Output NPZ fields include:
 
 | Field | Shape | Meaning |
 | --- | --- | --- |
 | `radar_data` | `(ant, chirp, range_bin)` | Complex range-FFT radar cube. |
-| `radar_params` | `(5,)` | `[f_c, slope, sample_rate, chirp_duration, num_samples]`. |
+| `radar_params` | `(6,)` | `[f_c, slope, sample_rate, chirp_duration, num_samples, chirp_interval]`. Legacy `(5,)` files are still accepted by visualization. |
+| `radar_chirp_duration_s` | scalar | FMCW ramp duration in seconds. |
+| `radar_chirp_interval_s` | scalar | Chirp-to-chirp interval/PRI in seconds. |
+| `radar_idle_time_s` | scalar | Idle gap after each chirp in seconds. |
+| `radar_add_noise` | scalar bool | Whether receiver noise was added. |
+| `radar_noise_floor_dbm` | scalar | Effective receiver noise floor in dBm. |
+| `radar_noise_power_w` / `radar_noise_std` | scalar | Complex Gaussian noise power and per-real-component standard deviation. |
 | `radar_array_pos` | `(ant, 3)` | Virtual array element positions in meters. |
 | `radar_array_shape` | `(2,)` | `[rows, cols]`. |
 | `rcs_model` | scalar string | `airsim_default_drone`. |
+| `radar_array_model` | scalar string | `far-field` or `spherical-wave`. |
+| `radar_model` | scalar string | Radar synthesis model identifier. |
 | `source_csi_path` | scalar string | Source CSI file path. |
 | `gt_pos` / `gt_vel` | `(3,)` when present | Ground-truth target position and velocity copied from CSI. |
 

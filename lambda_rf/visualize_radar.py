@@ -48,7 +48,9 @@ def compute_radar_maps(
     if num_range_bins < 2 or num_range_bins % 2 != 0:
         raise ValueError("number of range bins must be an even value >= 2")
 
-    f_c, slope, sample_rate, chirp_duration, expected_bins = np.asarray(radar_params, dtype=np.float64).reshape(-1)[:5]
+    params = np.asarray(radar_params, dtype=np.float64).reshape(-1)
+    f_c, slope, sample_rate, chirp_duration, expected_bins = params[:5]
+    chirp_interval = params[5] if params.size >= 6 else chirp_duration
     expected_bins = int(round(expected_bins))
     if expected_bins != num_range_bins:
         raise ValueError(f"radar_params expects {expected_bins} range bins, got {num_range_bins}")
@@ -60,7 +62,7 @@ def compute_radar_maps(
     cube_4d = work.reshape(rows, cols, num_chirps, num_range_bins)
 
     wavelength = C_M_S / float(f_c)
-    fd_axis = np.fft.fftshift(np.fft.fftfreq(num_chirps, d=chirp_duration))
+    fd_axis = np.fft.fftshift(np.fft.fftfreq(num_chirps, d=chirp_interval))
     velocity_axis = fd_axis * wavelength / 2.0
 
     mid = num_range_bins // 2

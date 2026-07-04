@@ -59,6 +59,66 @@ class ArrayCsiTest(unittest.TestCase):
         expected = np.array([-1j, 1j], dtype=np.complex64)
         np.testing.assert_allclose(mimo[:, 0, 0], expected, atol=1e-6)
 
+    def test_spherical_wave_uses_path_vertices_for_tx_wavefront(self):
+        arrays = source_arrays(
+            a_real=[1.0],
+            a_imag=[0.0],
+            theta_t=[np.pi / 2],
+            phi_t=[np.pi / 2],
+            theta_r=[np.pi / 2],
+            phi_r=[0.0],
+        )
+        arrays.update(
+            {
+                "tau": np.asarray([20.0 / C_M_S], dtype=np.float64),
+                "tx_pos": np.asarray([0.0, 0.0, 0.0], dtype=np.float32),
+                "uav_pos": np.asarray([10.0, 10.0, 0.0], dtype=np.float32),
+                "interactions": np.asarray([[1]], dtype=np.int32),
+                "vertices": np.asarray([[[0.0, 10.0, 0.0]]], dtype=np.float32),
+            }
+        )
+
+        fields = build_array_csi_fields(
+            arrays,
+            carrier_frequency_hz=C_M_S,
+            tx_shape=(1, 2),
+            rx_shape=(1, 1),
+            array_model="spherical-wave",
+        )
+        mimo = fields["a_mimo_real"] + 1j * fields["a_mimo_imag"]
+        tau_mimo = fields["tau_mimo"]
+
+        np.testing.assert_allclose(mimo[0, :, 0], np.array([-1j, 1j]), atol=1e-6)
+        np.testing.assert_allclose(tau_mimo[0, :, 0], np.array([20.25, 19.75]) / C_M_S, atol=1e-12)
+        self.assertEqual(str(fields["array_model"]), "spherical_wavefront_from_path_vertices")
+
+    def test_spherical_wave_requires_vertices_for_nlos_paths(self):
+        arrays = source_arrays(
+            a_real=[1.0],
+            a_imag=[0.0],
+            theta_t=[np.pi / 2],
+            phi_t=[0.0],
+            theta_r=[np.pi / 2],
+            phi_r=[0.0],
+        )
+        arrays.update(
+            {
+                "tau": np.asarray([1e-7], dtype=np.float64),
+                "tx_pos": np.asarray([0.0, 0.0, 0.0], dtype=np.float32),
+                "uav_pos": np.asarray([10.0, 0.0, 0.0], dtype=np.float32),
+                "interactions": np.asarray([[1]], dtype=np.int32),
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires vertices"):
+            build_array_csi_fields(
+                arrays,
+                carrier_frequency_hz=C_M_S,
+                tx_shape=(1, 1),
+                rx_shape=(1, 1),
+                array_model="spherical-wave",
+            )
+
     def test_array_orientation_rotates_local_positions_into_world_frame(self):
         arrays = source_arrays(
             a_real=[1.0],

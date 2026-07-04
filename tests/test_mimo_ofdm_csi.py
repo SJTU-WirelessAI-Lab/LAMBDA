@@ -49,6 +49,46 @@ class MimoOfdmCsiTest(unittest.TestCase):
             self.assertEqual(summary["mimo_shape"], (1, 2, 1))
             self.assertEqual(summary["freq_shape"], (1, 2, 4))
 
+    def test_expand_mimo_ofdm_npz_supports_spherical_wavefront(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "csi_000000.npz")
+            output_path = os.path.join(tmpdir, "mimo_ofdm", "csi_000000.npz")
+            np.savez(
+                input_path,
+                a_real=np.asarray([1.0], dtype=np.float32),
+                a_imag=np.asarray([0.0], dtype=np.float32),
+                theta_t=np.asarray([np.pi / 2.0], dtype=np.float32),
+                phi_t=np.asarray([np.pi / 2.0], dtype=np.float32),
+                theta_r=np.asarray([np.pi / 2.0], dtype=np.float32),
+                phi_r=np.asarray([0.0], dtype=np.float32),
+                tau=np.asarray([20.0 / C_M_S], dtype=np.float64),
+                doppler=np.asarray([0.0], dtype=np.float32),
+                valid=np.asarray([True], dtype=bool),
+                interactions=np.asarray([[1]], dtype=np.int32),
+                vertices=np.asarray([[[0.0, 10.0, 0.0]]], dtype=np.float32),
+                tx_pos=np.asarray([0.0, 0.0, 0.0], dtype=np.float32),
+                uav_pos=np.asarray([10.0, 10.0, 0.0], dtype=np.float32),
+                carrier_frequency=np.asarray(C_M_S, dtype=np.float64),
+            )
+
+            expand_mimo_ofdm_npz(
+                input_path=input_path,
+                output_path=output_path,
+                tx_shape=(1, 2),
+                rx_shape=(1, 1),
+                num_subcarriers=3,
+                subcarrier_spacing_hz=1.0,
+                profile_name="debug_1hz_3",
+                array_model="spherical-wave",
+            )
+
+            with np.load(output_path, allow_pickle=False) as data:
+                self.assertIn("tau_mimo", data.files)
+                self.assertIn("path_length_mimo", data.files)
+                self.assertEqual(str(data["array_model"]), "spherical_wavefront_from_path_vertices")
+                np.testing.assert_allclose(data["tau_mimo"][0, :, 0], np.array([20.25, 19.75]) / C_M_S, atol=1e-12)
+                self.assertEqual(data["h_freq_real"].shape, (1, 2, 3))
+
 
 if __name__ == "__main__":
     unittest.main()

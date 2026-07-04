@@ -8,8 +8,11 @@ import numpy as np
 from lambda_rf import config
 from lambda_rf import paths
 from lambda_rf.utils.array_csi import (
+    ARRAY_MODEL_FAR_FIELD,
+    ARRAY_MODEL_SPHERICAL,
     build_array_csi_fields,
     load_rotation_matrix_from_pose_json,
+    normalize_array_model,
     parse_array_shape,
 )
 from lambda_rf.utils.subcarrier_csi import build_subcarrier_csi_fields, validate_subcarrier_config
@@ -76,17 +79,20 @@ def _sibling_mimo_ofdm_output_dir(
     rx_shape: tuple[int, int],
     tx_shape: tuple[int, int],
     profile_tag: str,
+    array_model: str,
 ) -> Path:
     shape_tag = paths.array_shape_tag(rx_shape=rx_shape, tx_shape=tx_shape)
+    model = normalize_array_model(array_model)
+    model_parts = [] if model == ARRAY_MODEL_FAR_FIELD else ["spherical_wave"]
     parts = list(input_root.parts)
     for idx, part in enumerate(parts):
         if part.startswith("csi_rt_"):
             parts[idx] = "mimo_ofdm_" + part
-            return Path(*parts) / shape_tag / profile_tag
+            return Path(*parts).joinpath(shape_tag, *model_parts, profile_tag)
         if part == "csi":
             parts[idx] = "mimo_ofdm_csi"
-            return Path(*parts) / shape_tag / profile_tag
-    return input_root.parent / "mimo_ofdm_csi" / input_root.name / shape_tag / profile_tag
+            return Path(*parts).joinpath(shape_tag, *model_parts, profile_tag)
+    return (input_root.parent / "mimo_ofdm_csi" / input_root.name).joinpath(shape_tag, *model_parts, profile_tag)
 
 
 def _load_rotation_sources(
@@ -125,6 +131,7 @@ def expand_mimo_ofdm_npz(
     tx_orientation_source: str | None = None,
     rx_orientation_source: str | None = None,
     profile_name: str | None = None,
+    array_model: str = ARRAY_MODEL_FAR_FIELD,
 ) -> None:
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -145,6 +152,7 @@ def expand_mimo_ofdm_npz(
         rx_rotation_matrix=rx_rotation_matrix,
         tx_orientation_source=tx_orientation_source,
         rx_orientation_source=rx_orientation_source,
+        array_model=array_model,
     )
     arrays.update(mimo_fields)
 
@@ -180,7 +188,9 @@ def run(
     limit: int | None = None,
     tx_orientation_pose: str | None = None,
     rx_orientation_pose: str | None = None,
+    array_model: str = ARRAY_MODEL_FAR_FIELD,
 ) -> Path:
+    array_model_resolved = normalize_array_model(array_model)
     tx_shape_tuple = parse_array_shape(tx_shape, config.TX_ARRAY_SHAPE, "tx_shape")
     rx_shape_tuple = parse_array_shape(rx_shape, config.RX_ARRAY_SHAPE, "rx_shape")
     profile_cfg = _resolve_profile(profile, num_subcarriers, subcarrier_spacing_hz)
@@ -194,6 +204,7 @@ def run(
             rx_shape=rx_shape_tuple,
             tx_shape=tx_shape_tuple,
             profile_tag=profile_cfg["profile_tag"],
+            array_model=array_model_resolved,
         ).resolve()
     else:
         output_root = Path(
@@ -205,6 +216,8 @@ def run(
                 subcarrier_spacing_hz=profile_cfg["subcarrier_spacing_hz"],
             )
         ).resolve()
+        if array_model_resolved == ARRAY_MODEL_SPHERICAL:
+            output_root = output_root.parent / "spherical_wave" / output_root.name
 
     if not input_root.exists():
         raise FileNotFoundError(f"Input path-level CSI directory not found: {input_root}")
@@ -231,6 +244,7 @@ def run(
         f"[MIMO OFDM CSI] MIMO:    TX shape={tx_shape_tuple}, RX shape={rx_shape_tuple}, "
         f"spacing={spacing_wavelengths} lambda"
     )
+    print(f"[MIMO OFDM CSI] Array model: {array_model_resolved}")
     print(
         f"[MIMO OFDM CSI] OFDM:    {profile_cfg['profile_tag']} | "
         f"N={profile_cfg['num_subcarriers']}, df={profile_cfg['subcarrier_spacing_hz']} Hz"
@@ -261,6 +275,7 @@ def run(
             tx_orientation_source=tx_orientation_source,
             rx_orientation_source=rx_orientation_source,
             profile_name=profile_cfg["profile_tag"],
+            array_model=array_model_resolved,
         )
         processed += 1
         if processed == 1 or processed % 100 == 0:

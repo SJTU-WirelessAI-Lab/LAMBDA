@@ -9,6 +9,21 @@ import numpy as np
 
 
 C_M_S = 299792458.0
+ARRAY_MODEL_FAR_FIELD = "far-field"
+ARRAY_MODEL_SPHERICAL = "spherical-wave"
+ARRAY_MODEL_ALIASES = {
+    "far-field": ARRAY_MODEL_FAR_FIELD,
+    "far_field": ARRAY_MODEL_FAR_FIELD,
+    "farfield": ARRAY_MODEL_FAR_FIELD,
+    "far_field_steering_from_single_link_with_optional_orientation": ARRAY_MODEL_FAR_FIELD,
+    "spherical-wave": ARRAY_MODEL_SPHERICAL,
+    "spherical_wave": ARRAY_MODEL_SPHERICAL,
+    "spherical": ARRAY_MODEL_SPHERICAL,
+    "near-field": ARRAY_MODEL_SPHERICAL,
+    "near_field": ARRAY_MODEL_SPHERICAL,
+    "nearfield": ARRAY_MODEL_SPHERICAL,
+    "spherical_wavefront_from_path_vertices": ARRAY_MODEL_SPHERICAL,
+}
 
 
 def validate_array_shape(shape: tuple[int, int] | list[int], name: str) -> tuple[int, int]:
@@ -183,6 +198,15 @@ def steering_vectors(
     return np.exp(1j * phase)
 
 
+def normalize_array_model(value: str | None) -> str:
+    key = "far-field" if value is None else str(value).strip().lower()
+    try:
+        return ARRAY_MODEL_ALIASES[key]
+    except KeyError as exc:
+        choices = ", ".join(sorted({ARRAY_MODEL_FAR_FIELD, ARRAY_MODEL_SPHERICAL}))
+        raise ValueError(f"array_model must be one of: {choices}; got {value!r}") from exc
+
+
 def representative_by_path(values: np.ndarray, valid: np.ndarray | None = None) -> np.ndarray:
     """Reduce all non-path dimensions and return one representative value per path."""
     values = np.asarray(values)
@@ -211,6 +235,139 @@ def _required_array(arrays: dict[str, np.ndarray], key: str) -> np.ndarray:
     return arrays[key]
 
 
+def _position3(arrays: dict[str, np.ndarray], keys: tuple[str, ...]) -> np.ndarray:
+    for key in keys:
+        if key in arrays:
+            value = np.asarray(arrays[key], dtype=np.float64).reshape(-1)
+            if value.shape != (3,):
+                raise ValueError(f"{key} must contain exactly 3 coordinates, got shape {np.asarray(arrays[key]).shape}")
+            if not np.all(np.isfinite(value)):
+                raise ValueError(f"{key} contains non-finite coordinates")
+            return value
+    raise KeyError(f"Missing required position field; expected one of {keys}")
+
+
+def _representative_interactions(interactions: np.ndarray | None, num_paths: int) -> np.ndarray | None:
+    if interactions is None:
+        return None
+    values = np.asarray(interactions, dtype=np.int32)
+    if values.size == 0:
+        return np.zeros((0, num_paths), dtype=np.int32)
+    if values.shape[-1] != num_paths:
+        raise ValueError(f"interactions must end with path dimension {num_paths}, got {values.shape}")
+    if values.ndim == 1:
+        return values.reshape(1, num_paths)
+    if values.ndim == 2:
+        return values
+
+    steps = values.shape[0]
+    middle = int(np.prod(values.shape[1:-1]))
+    flat = values.reshape(steps, middle, num_paths)
+    reduced = flat[:, 0, :].copy()
+    for step_idx in range(steps):
+        for path_idx in range(num_paths):
+            nonzero = np.flatnonzero(flat[step_idx, :, path_idx] != 0)
+            if nonzero.size:
+                reduced[step_idx, path_idx] = flat[step_idx, nonzero[0], path_idx]
+    return reduced
+
+
+def _representative_vertices(vertices: np.ndarray, num_paths: int) -> np.ndarray:
+    values = np.asarray(vertices, dtype=np.float64)
+    if values.ndim < 3 or values.shape[-1] != 3 or values.shape[-2] != num_paths:
+        raise ValueError(f"vertices must have shape (..., {num_paths}, 3), got {values.shape}")
+    if values.ndim == 3:
+        return values
+
+    steps = values.shape[0]
+    middle = int(np.prod(values.shape[1:-2]))
+    flat = values.reshape(steps, middle, num_paths, 3)
+    reduced = np.full((steps, num_paths, 3), np.nan, dtype=np.float64)
+    finite = np.all(np.isfinite(flat), axis=-1)
+    for step_idx in range(steps):
+        for path_idx in range(num_paths):
+            rows = np.flatnonzero(finite[step_idx, :, path_idx])
+            if rows.size:
+                reduced[step_idx, path_idx, :] = flat[step_idx, rows[0], path_idx, :]
+    return reduced
+
+
+def _path_vertices_for_index(
+    vertices: np.ndarray | None,
+    interactions: np.ndarray | None,
+    path_idx: int,
+) -> tuple[np.ndarray, bool]:
+    if interactions is not None:
+        path_interactions = interactions[:, path_idx]
+        has_interactions = bool(np.any(path_interactions != 0))
+    else:
+        path_interactions = None
+        has_interactions = False
+
+    if vertices is None:
+        if has_interactions:
+            raise ValueError("spherical-wave array model requires vertices for NLOS paths")
+        return np.zeros((0, 3), dtype=np.float64), False
+
+    path_vertices = vertices[:, path_idx, :]
+    finite = np.all(np.isfinite(path_vertices), axis=1)
+    if path_interactions is not None and path_interactions.shape[0] == path_vertices.shape[0]:
+        mask = finite & (path_interactions != 0)
+    else:
+        mask = finite
+
+    selected = path_vertices[mask]
+    if has_interactions and selected.size == 0:
+        raise ValueError("spherical-wave array model found an NLOS path without finite vertices")
+    return selected, has_interactions
+
+
+def spherical_path_lengths_from_vertices(
+    arrays: dict[str, np.ndarray],
+    tx_positions_m: np.ndarray,
+    rx_positions_m: np.ndarray,
+    num_paths: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return element and center geometric path lengths for a spherical-wave model."""
+    tx_center = _position3(arrays, ("tx_pos",))
+    rx_center = _position3(arrays, ("uav_pos", "rx_pos"))
+    tx_abs = tx_center[np.newaxis, :] + np.asarray(tx_positions_m, dtype=np.float64)
+    rx_abs = rx_center[np.newaxis, :] + np.asarray(rx_positions_m, dtype=np.float64)
+
+    raw_vertices = arrays.get("vertices")
+    vertices = _representative_vertices(raw_vertices, num_paths) if raw_vertices is not None else None
+    interactions = _representative_interactions(arrays.get("interactions"), num_paths)
+
+    element_lengths = np.zeros((rx_abs.shape[0], tx_abs.shape[0], num_paths), dtype=np.float64)
+    center_lengths = np.zeros(num_paths, dtype=np.float64)
+
+    for path_idx in range(num_paths):
+        path_vertices, _ = _path_vertices_for_index(vertices, interactions, path_idx)
+        if path_vertices.shape[0] == 0:
+            element_delta = rx_abs[:, np.newaxis, :] - tx_abs[np.newaxis, :, :]
+            element_lengths[:, :, path_idx] = np.linalg.norm(element_delta, axis=-1)
+            center_lengths[path_idx] = float(np.linalg.norm(rx_center - tx_center))
+            continue
+
+        first_vertex = path_vertices[0]
+        last_vertex = path_vertices[-1]
+        if path_vertices.shape[0] > 1:
+            middle_length = float(np.sum(np.linalg.norm(np.diff(path_vertices, axis=0), axis=1)))
+        else:
+            middle_length = 0.0
+
+        tx_lengths = np.linalg.norm(first_vertex[np.newaxis, :] - tx_abs, axis=1)
+        rx_lengths = np.linalg.norm(rx_abs - last_vertex[np.newaxis, :], axis=1)
+        element_lengths[:, :, path_idx] = rx_lengths[:, np.newaxis] + tx_lengths[np.newaxis, :] + middle_length
+        center_lengths[path_idx] = (
+            float(np.linalg.norm(first_vertex - tx_center))
+            + middle_length
+            + float(np.linalg.norm(rx_center - last_vertex))
+        )
+
+    return element_lengths, center_lengths
+
+
 def build_array_csi_fields(
     arrays: dict[str, np.ndarray],
     carrier_frequency_hz: float,
@@ -221,8 +378,10 @@ def build_array_csi_fields(
     rx_rotation_matrix: np.ndarray | None = None,
     tx_orientation_source: str | None = None,
     rx_orientation_source: str | None = None,
+    array_model: str = ARRAY_MODEL_FAR_FIELD,
 ) -> dict[str, np.ndarray]:
-    """Expand single-link per-path CSI into far-field MIMO path coefficients."""
+    """Expand single-link per-path CSI into MIMO path coefficients."""
+    model = normalize_array_model(array_model)
     tx_shape = validate_array_shape(tx_shape, "tx_shape")
     rx_shape = validate_array_shape(rx_shape, "rx_shape")
     if carrier_frequency_hz <= 0.0:
@@ -258,14 +417,34 @@ def build_array_csi_fields(
     tx_positions = rotate_array_positions(tx_positions_local, tx_rotation)
     rx_positions = rotate_array_positions(rx_positions_local, rx_rotation)
 
+    tau_mimo = None
+    path_length_mimo = None
     if num_paths == 0:
         a_mimo = np.zeros((rx_positions.shape[0], tx_positions.shape[0], 0), dtype=np.complex128)
-    else:
+    elif model == ARRAY_MODEL_FAR_FIELD:
         tx_sv = steering_vectors(tx_positions, theta_t, phi_t, wavelength_m)
         rx_sv = steering_vectors(rx_positions, theta_r, phi_r, wavelength_m)
         a_mimo = rx_sv[:, np.newaxis, :] * np.conjugate(tx_sv[np.newaxis, :, :]) * a_path[np.newaxis, np.newaxis, :]
+    else:
+        tau_path = representative_by_path(_required_array(arrays, "tau"), valid).astype(np.float64)
+        if tau_path.shape[0] != num_paths:
+            raise ValueError(f"tau reduced path count {tau_path.shape[0]} != CSI path count {num_paths}")
+        if not np.all(np.isfinite(tau_path)):
+            raise ValueError("tau contains non-finite values")
 
-    return {
+        element_lengths, center_lengths = spherical_path_lengths_from_vertices(
+            arrays=arrays,
+            tx_positions_m=tx_positions,
+            rx_positions_m=rx_positions,
+            num_paths=num_paths,
+        )
+        delta_length = element_lengths - center_lengths[np.newaxis, np.newaxis, :]
+        phase = np.exp(-1j * (2.0 * np.pi / wavelength_m) * delta_length)
+        a_mimo = a_path[np.newaxis, np.newaxis, :] * phase
+        tau_mimo = tau_path[np.newaxis, np.newaxis, :] + delta_length / C_M_S
+        path_length_mimo = tau_mimo * C_M_S
+
+    fields = {
         "a_mimo_real": a_mimo.real.astype(np.float32),
         "a_mimo_imag": a_mimo.imag.astype(np.float32),
         "tx_array_pos": tx_positions.astype(np.float32),
@@ -277,11 +456,25 @@ def build_array_csi_fields(
         "tx_array_shape": np.asarray(tx_shape, dtype=np.int32),
         "rx_array_shape": np.asarray(rx_shape, dtype=np.int32),
         "array_spacing_wavelengths": np.asarray(spacing_wavelengths, dtype=np.float32),
-        "array_model": np.asarray("far_field_steering_from_single_link_with_optional_orientation"),
+        "array_model": np.asarray(
+            "far_field_steering_from_single_link_with_optional_orientation"
+            if model == ARRAY_MODEL_FAR_FIELD
+            else "spherical_wavefront_from_path_vertices"
+        ),
         "array_orientation_model": np.asarray("local_yz_panel_local_x_boresight"),
         "tx_array_orientation_source": np.asarray(tx_orientation_source or "identity"),
         "rx_array_orientation_source": np.asarray(rx_orientation_source or "identity"),
     }
+    if tau_mimo is not None and path_length_mimo is not None:
+        fields.update(
+            {
+                "tau_mimo": tau_mimo.astype(np.float64),
+                "path_length_mimo": path_length_mimo.astype(np.float64),
+                "near_field_reference": np.asarray("sionna_center_tau_with_geometric_delta"),
+                "near_field_spreading": np.asarray("phase-only"),
+            }
+        )
+    return fields
 
 
 def expand_csi_npz(
@@ -294,6 +487,7 @@ def expand_csi_npz(
     rx_rotation_matrix: np.ndarray | None = None,
     tx_orientation_source: str | None = None,
     rx_orientation_source: str | None = None,
+    array_model: str = ARRAY_MODEL_FAR_FIELD,
 ) -> None:
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -314,6 +508,7 @@ def expand_csi_npz(
         rx_rotation_matrix=rx_rotation_matrix,
         tx_orientation_source=tx_orientation_source,
         rx_orientation_source=rx_orientation_source,
+        array_model=array_model,
     )
     arrays.update(array_fields)
     arrays["source_csi_path"] = np.asarray(str(input_path))

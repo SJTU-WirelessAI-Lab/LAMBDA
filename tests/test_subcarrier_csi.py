@@ -79,6 +79,25 @@ class SubcarrierCsiTest(unittest.TestCase):
         np.testing.assert_allclose(h_freq[0, 0], np.full(3, 1.0 + 0.5j), atol=1e-7)
         np.testing.assert_allclose(h_freq[0, 1], np.full(3, 2.0 - 0.25j), atol=1e-7)
 
+    def test_array_input_uses_tau_mimo_when_available(self):
+        arrays = source_arrays(a_real=[0.0], a_imag=[0.0], tau=[0.0])
+        arrays["a_mimo_real"] = np.asarray([[[1.0], [1.0]]], dtype=np.float32)
+        arrays["a_mimo_imag"] = np.asarray([[[0.0], [0.0]]], dtype=np.float32)
+        arrays["tau_mimo"] = np.asarray([[[0.0], [0.25]]], dtype=np.float64)
+
+        fields = build_subcarrier_csi_fields(
+            arrays,
+            num_subcarriers=3,
+            subcarrier_spacing_hz=1.0,
+            input_mode="array",
+        )
+        h_freq = fields["h_freq_real"] + 1j * fields["h_freq_imag"]
+
+        np.testing.assert_allclose(h_freq[0, 0], np.ones(3), atol=1e-7)
+        expected = np.exp(-1j * 2.0 * np.pi * np.array([-1.0, 0.0, 1.0]) * 0.25)
+        np.testing.assert_allclose(h_freq[0, 1], expected, atol=1e-7)
+        self.assertEqual(str(fields["frequency_response_model"]), "array_pair_path_delay_phase_from_snapshot")
+
     def test_expand_subcarrier_npz_preserves_fields_and_read_csi_detects_frequency_csi(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "csi_000000.npz")
