@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--array-model",
         choices=["far-field", "spherical-wave"],
         default="far-field",
-        help="Array wavefront model. spherical-wave uses per-element path lengths from CSI vertices.",
+        help="Array wavefront model. spherical-wave uses per-element path lengths from CSI path_vertices.",
     )
     mimo_ofdm_cmd.add_argument("--profile", help="OFDM subcarrier profile name, for example sub6_30k_1024.")
     mimo_ofdm_cmd.add_argument("--num-subcarriers", type=int, help="Override number of OFDM subcarriers.")
@@ -203,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--array-model",
         choices=["far-field", "spherical-wave"],
         default="far-field",
-        help="Radar array wavefront model. spherical-wave uses per-antenna path lengths from CSI vertices.",
+        help="Radar array wavefront model. spherical-wave uses per-antenna path lengths from CSI path_vertices.",
     )
     radar_cmd.add_argument("--add-noise", action="store_true", default=None, help="Add complex Gaussian receiver noise.")
     radar_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")

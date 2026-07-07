@@ -164,6 +164,7 @@ class RadarUtilityTest(unittest.TestCase):
             "uav_pos": np.asarray([10.0, 10.0, 0.0]),
             "interactions": np.asarray([[1]], dtype=np.int32),
             "vertices": np.asarray([[[0.0, 10.0, 0.0]]], dtype=np.float64),
+            "path_interaction_count": np.asarray([1], dtype=np.int32),
         }
         ant_pos = virtual_array_positions(radar.f_c, shape=(1, 2), spacing_wavelengths=0.5)
 

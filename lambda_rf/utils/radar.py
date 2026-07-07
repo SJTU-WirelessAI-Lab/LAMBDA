@@ -312,9 +312,8 @@ def load_csi_paths(npz_path: str | Path, fallback_carrier_frequency_hz: float | 
         "uav_vel": arrays.get("uav_vel"),
         "tx_pos": arrays.get("tx_pos"),
         "interactions": mask_path_array("interactions"),
-        "vertices": mask_path_array("vertices"),
-        "objects": mask_path_array("objects"),
-        "primitives": mask_path_array("primitives"),
+        "vertices": mask_path_array("path_vertices"),
+        "path_interaction_count": mask_path_array("path_interaction_count"),
         "timestamp": float(np.asarray(arrays.get("t", arrays.get("timestamp", 0.0))).reshape(-1)[0]),
         "carrier_frequency": float(
             np.asarray(arrays.get("carrier_frequency", fallback_carrier_frequency_hz or 0.0)).reshape(-1)[0]
@@ -383,10 +382,22 @@ def _representative_path_steps(values: Any, num_paths: int, vector_dim: int | No
     return out
 
 
-def _vertices_for_path(vertices: np.ndarray | None, interactions: np.ndarray | None, path_idx: int) -> np.ndarray:
+def _vertices_for_path(
+    vertices: np.ndarray | None,
+    interactions: np.ndarray | None,
+    path_interaction_count: np.ndarray | None,
+    path_idx: int,
+) -> np.ndarray:
+    if path_interaction_count is None:
+        raise KeyError("spherical-wave radar model requires path_interaction_count")
+    counts = np.asarray(path_interaction_count, dtype=np.int32).reshape(-1)
+    if path_idx >= counts.size:
+        raise ValueError("path_interaction_count has fewer entries than paths")
+    has_interactions = bool(counts[path_idx] > 0)
+
     if vertices is None:
-        if interactions is not None and np.any(interactions[:, path_idx] != 0):
-            raise ValueError("spherical-wave radar model requires vertices for NLOS paths")
+        if has_interactions:
+            raise ValueError("spherical-wave radar model requires path_vertices for NLOS paths")
         return np.zeros((0, 3), dtype=np.float64)
 
     path_vertices = vertices[:, path_idx, :]
@@ -396,8 +407,8 @@ def _vertices_for_path(vertices: np.ndarray | None, interactions: np.ndarray | N
     else:
         mask = finite
     selected = path_vertices[mask]
-    if interactions is not None and np.any(interactions[:, path_idx] != 0) and selected.size == 0:
-        raise ValueError("spherical-wave radar model found an NLOS path without finite vertices")
+    if has_interactions and selected.size == 0:
+        raise ValueError("spherical-wave radar model found an NLOS path without finite path_vertices")
     return selected
 
 
@@ -426,10 +437,11 @@ def radar_one_way_tau_by_antenna(
 
     interactions = _representative_path_steps(csi_data.get("interactions"), num_paths)
     vertices = _representative_path_steps(csi_data.get("vertices"), num_paths, vector_dim=3)
+    path_interaction_count = csi_data.get("path_interaction_count")
 
     out = np.zeros((ant_abs.shape[0], num_paths), dtype=np.float64)
     for path_idx in range(num_paths):
-        path_vertices = _vertices_for_path(vertices, interactions, path_idx)
+        path_vertices = _vertices_for_path(vertices, interactions, path_interaction_count, path_idx)
         if path_vertices.shape[0] == 0:
             center_length = float(np.linalg.norm(uav_pos - tx_center))
             element_lengths = np.linalg.norm(uav_pos[np.newaxis, :] - ant_abs, axis=1)

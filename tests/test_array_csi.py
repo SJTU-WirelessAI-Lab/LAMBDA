@@ -74,7 +74,8 @@ class ArrayCsiTest(unittest.TestCase):
                 "tx_pos": np.asarray([0.0, 0.0, 0.0], dtype=np.float32),
                 "uav_pos": np.asarray([10.0, 10.0, 0.0], dtype=np.float32),
                 "interactions": np.asarray([[1]], dtype=np.int32),
-                "vertices": np.asarray([[[0.0, 10.0, 0.0]]], dtype=np.float32),
+                "path_vertices": np.asarray([[[0.0, 10.0, 0.0]]], dtype=np.float32),
+                "path_interaction_count": np.asarray([1], dtype=np.int32),
             }
         )
 
@@ -92,7 +93,7 @@ class ArrayCsiTest(unittest.TestCase):
         np.testing.assert_allclose(tau_mimo[0, :, 0], np.array([20.25, 19.75]) / C_M_S, atol=1e-12)
         self.assertEqual(str(fields["array_model"]), "spherical_wavefront_from_path_vertices")
 
-    def test_spherical_wave_requires_vertices_for_nlos_paths(self):
+    def test_spherical_wave_requires_compact_path_geometry_for_nlos_paths(self):
         arrays = source_arrays(
             a_real=[1.0],
             a_imag=[0.0],
@@ -107,10 +108,11 @@ class ArrayCsiTest(unittest.TestCase):
                 "tx_pos": np.asarray([0.0, 0.0, 0.0], dtype=np.float32),
                 "uav_pos": np.asarray([10.0, 0.0, 0.0], dtype=np.float32),
                 "interactions": np.asarray([[1]], dtype=np.int32),
+                "path_interaction_count": np.asarray([1], dtype=np.int32),
             }
         )
 
-        with self.assertRaisesRegex(ValueError, "requires vertices"):
+        with self.assertRaisesRegex(KeyError, "path_vertices"):
             build_array_csi_fields(
                 arrays,
                 carrier_frequency_hz=C_M_S,

@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from lambda_rf.utils.path_geometry import representative_interactions, representative_vertices
+
 
 C_M_S = 299792458.0
 ARRAY_MODEL_FAR_FIELD = "far-field"
@@ -248,56 +250,35 @@ def _position3(arrays: dict[str, np.ndarray], keys: tuple[str, ...]) -> np.ndarr
 
 
 def _representative_interactions(interactions: np.ndarray | None, num_paths: int) -> np.ndarray | None:
-    if interactions is None:
-        return None
-    values = np.asarray(interactions, dtype=np.int32)
-    if values.size == 0:
-        return np.zeros((0, num_paths), dtype=np.int32)
-    if values.shape[-1] != num_paths:
-        raise ValueError(f"interactions must end with path dimension {num_paths}, got {values.shape}")
-    if values.ndim == 1:
-        return values.reshape(1, num_paths)
-    if values.ndim == 2:
-        return values
-
-    steps = values.shape[0]
-    middle = int(np.prod(values.shape[1:-1]))
-    flat = values.reshape(steps, middle, num_paths)
-    reduced = flat[:, 0, :].copy()
-    for step_idx in range(steps):
-        for path_idx in range(num_paths):
-            nonzero = np.flatnonzero(flat[step_idx, :, path_idx] != 0)
-            if nonzero.size:
-                reduced[step_idx, path_idx] = flat[step_idx, nonzero[0], path_idx]
-    return reduced
+    return representative_interactions(interactions, num_paths)
 
 
 def _representative_vertices(vertices: np.ndarray, num_paths: int) -> np.ndarray:
-    values = np.asarray(vertices, dtype=np.float64)
-    if values.ndim < 3 or values.shape[-1] != 3 or values.shape[-2] != num_paths:
-        raise ValueError(f"vertices must have shape (..., {num_paths}, 3), got {values.shape}")
-    if values.ndim == 3:
-        return values
-
-    steps = values.shape[0]
-    middle = int(np.prod(values.shape[1:-2]))
-    flat = values.reshape(steps, middle, num_paths, 3)
-    reduced = np.full((steps, num_paths, 3), np.nan, dtype=np.float64)
-    finite = np.all(np.isfinite(flat), axis=-1)
-    for step_idx in range(steps):
-        for path_idx in range(num_paths):
-            rows = np.flatnonzero(finite[step_idx, :, path_idx])
-            if rows.size:
-                reduced[step_idx, path_idx, :] = flat[step_idx, rows[0], path_idx, :]
+    reduced = representative_vertices(vertices, num_paths)
+    if reduced is None:
+        raise ValueError("vertices cannot be None")
     return reduced
+
+
+def _path_interaction_counts(values: np.ndarray | None, num_paths: int) -> np.ndarray | None:
+    if values is None:
+        return None
+    counts = np.asarray(values, dtype=np.int32).reshape(-1)
+    if counts.shape != (num_paths,):
+        raise ValueError(f"path_interaction_count must have shape ({num_paths},), got {np.asarray(values).shape}")
+    return counts
 
 
 def _path_vertices_for_index(
     vertices: np.ndarray | None,
     interactions: np.ndarray | None,
+    path_interaction_count: np.ndarray | None,
     path_idx: int,
 ) -> tuple[np.ndarray, bool]:
-    if interactions is not None:
+    if path_interaction_count is not None:
+        path_interactions = None
+        has_interactions = bool(path_interaction_count[path_idx] > 0)
+    elif interactions is not None:
         path_interactions = interactions[:, path_idx]
         has_interactions = bool(np.any(path_interactions != 0))
     else:
@@ -306,7 +287,7 @@ def _path_vertices_for_index(
 
     if vertices is None:
         if has_interactions:
-            raise ValueError("spherical-wave array model requires vertices for NLOS paths")
+            raise ValueError("spherical-wave array model requires path_vertices for NLOS paths")
         return np.zeros((0, 3), dtype=np.float64), False
 
     path_vertices = vertices[:, path_idx, :]
@@ -318,7 +299,7 @@ def _path_vertices_for_index(
 
     selected = path_vertices[mask]
     if has_interactions and selected.size == 0:
-        raise ValueError("spherical-wave array model found an NLOS path without finite vertices")
+        raise ValueError("spherical-wave array model found an NLOS path without finite path_vertices")
     return selected, has_interactions
 
 
@@ -334,15 +315,15 @@ def spherical_path_lengths_from_vertices(
     tx_abs = tx_center[np.newaxis, :] + np.asarray(tx_positions_m, dtype=np.float64)
     rx_abs = rx_center[np.newaxis, :] + np.asarray(rx_positions_m, dtype=np.float64)
 
-    raw_vertices = arrays.get("vertices")
-    vertices = _representative_vertices(raw_vertices, num_paths) if raw_vertices is not None else None
+    vertices = _representative_vertices(_required_array(arrays, "path_vertices"), num_paths)
     interactions = _representative_interactions(arrays.get("interactions"), num_paths)
+    path_interaction_count = _path_interaction_counts(_required_array(arrays, "path_interaction_count"), num_paths)
 
     element_lengths = np.zeros((rx_abs.shape[0], tx_abs.shape[0], num_paths), dtype=np.float64)
     center_lengths = np.zeros(num_paths, dtype=np.float64)
 
     for path_idx in range(num_paths):
-        path_vertices, _ = _path_vertices_for_index(vertices, interactions, path_idx)
+        path_vertices, _ = _path_vertices_for_index(vertices, interactions, path_interaction_count, path_idx)
         if path_vertices.shape[0] == 0:
             element_delta = rx_abs[:, np.newaxis, :] - tx_abs[np.newaxis, :, :]
             element_lengths[:, :, path_idx] = np.linalg.norm(element_delta, axis=-1)
@@ -396,19 +377,6 @@ def build_array_csi_fields(
     a_path = representative_by_path(a_real, valid).astype(np.float64) + 1j * representative_by_path(a_imag, valid).astype(np.float64)
     num_paths = a_path.shape[0]
 
-    theta_t = representative_by_path(_required_array(arrays, "theta_t"), valid)
-    phi_t = representative_by_path(_required_array(arrays, "phi_t"), valid)
-    theta_r = representative_by_path(_required_array(arrays, "theta_r"), valid)
-    phi_r = representative_by_path(_required_array(arrays, "phi_r"), valid)
-    for key, values in {
-        "theta_t": theta_t,
-        "phi_t": phi_t,
-        "theta_r": theta_r,
-        "phi_r": phi_r,
-    }.items():
-        if values.shape[0] != num_paths:
-            raise ValueError(f"{key} reduced path count {values.shape[0]} != CSI path count {num_paths}")
-
     wavelength_m = C_M_S / float(carrier_frequency_hz)
     tx_rotation = validate_rotation_matrix(tx_rotation_matrix, "tx_rotation_matrix")
     rx_rotation = validate_rotation_matrix(rx_rotation_matrix, "rx_rotation_matrix")
@@ -422,6 +390,19 @@ def build_array_csi_fields(
     if num_paths == 0:
         a_mimo = np.zeros((rx_positions.shape[0], tx_positions.shape[0], 0), dtype=np.complex128)
     elif model == ARRAY_MODEL_FAR_FIELD:
+        theta_t = representative_by_path(_required_array(arrays, "theta_t"), valid)
+        phi_t = representative_by_path(_required_array(arrays, "phi_t"), valid)
+        theta_r = representative_by_path(_required_array(arrays, "theta_r"), valid)
+        phi_r = representative_by_path(_required_array(arrays, "phi_r"), valid)
+        for key, values in {
+            "theta_t": theta_t,
+            "phi_t": phi_t,
+            "theta_r": theta_r,
+            "phi_r": phi_r,
+        }.items():
+            if values.shape[0] != num_paths:
+                raise ValueError(f"{key} reduced path count {values.shape[0]} != CSI path count {num_paths}")
+
         tx_sv = steering_vectors(tx_positions, theta_t, phi_t, wavelength_m)
         rx_sv = steering_vectors(rx_positions, theta_r, phi_r, wavelength_m)
         a_mimo = rx_sv[:, np.newaxis, :] * np.conjugate(tx_sv[np.newaxis, :, :]) * a_path[np.newaxis, np.newaxis, :]

@@ -94,8 +94,8 @@ f60p0GHz_V_snow_gunn_east_dry_R2p0mmh_lwe_gas_p676
 `mimo-ofdm-csi` expands released path-level CSI into MIMO path coefficients and
 then builds OFDM frequency-domain CSI in the same output file. The default
 array model is far-field plane-wave steering. The optional
-`--array-model spherical-wave` mode uses path vertices to synthesize near-field
-phase and delay differences for each antenna pair.
+`--array-model spherical-wave` mode uses compact path geometry fields to
+synthesize near-field phase and delay differences for each antenna pair.
 
 ```bash
 python -m lambda_rf mimo-ofdm-csi \
@@ -115,7 +115,7 @@ Useful options:
 | `--spacing-wavelengths` | MIMO element spacing in carrier wavelengths, default `0.5`. |
 | `--tx-orientation-pose` | Pose JSON whose quaternion rotates TX local MIMO coordinates into the world frame. |
 | `--rx-orientation-pose` | Pose JSON whose quaternion rotates RX local MIMO coordinates into the world frame. |
-| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for path-vertex near-field phases and delays. |
+| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for near-field phases and delays from `path_vertices` and `path_interaction_count`. |
 | `--profile NAME` | Use a named OFDM subcarrier profile. |
 | `--num-subcarriers N` | Override profile subcarrier count. |
 | `--subcarrier-spacing HZ` | Override profile subcarrier spacing in Hz. |
@@ -166,9 +166,9 @@ Added NPZ fields:
 | `source_mimo_ofdm_input_path` | scalar string | Input file used by final MIMO OFDM generation. |
 | `csi_product` | scalar string | `mimo_ofdm`. |
 
-Spherical-wave mode requires path-level CSI files that include `vertices`,
-`interactions`, `tx_pos`, and `uav_pos`. Files without path vertices can still
-be processed with the default far-field model.
+Spherical-wave mode requires path-level CSI files that include `path_vertices`,
+`path_interaction_count`, `tx_pos`, and `uav_pos`. Files without compact path
+geometry can still be processed with the default far-field model.
 
 ## CSI Reader
 
@@ -227,7 +227,7 @@ Useful options:
 | `--add-noise` | Add complex Gaussian receiver noise before the range FFT. |
 | `--array-shape` | Radar virtual array shape, default `4,4`. |
 | `--radar-yaw`, `--radar-pitch`, `--radar-roll` | Radar mount orientation in degrees. |
-| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for per-antenna near-field delays from CSI vertices. |
+| `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for per-antenna near-field delays from CSI `path_vertices`. |
 
 Output NPZ fields include:
 

@@ -106,7 +106,7 @@ python -m lambda_rf mimo-ofdm-csi \
 
 The default array model is far-field plane-wave steering. Use
 `--array-model spherical-wave` to synthesize element-wise near-field phases and
-per-antenna-pair delays from path vertices:
+per-antenna-pair delays from compact path geometry fields:
 
 ```bash
 python -m lambda_rf mimo-ofdm-csi \
@@ -135,7 +135,8 @@ python -m lambda_rf radar \
 `--chirp-interval` sets the PRI including idle gap. You can also pass
 `--idle-time` to specify only the gap after each chirp. Radar also accepts
 `--array-model spherical-wave` to use per-radar-antenna near-field delays from
-the same path vertices used by MIMO OFDM CSI.
+the same `path_vertices` and `path_interaction_count` fields used by MIMO OFDM
+CSI.
 
 Render Range-Doppler, Range-Azimuth, and Range-Elevation images:
 
