@@ -1,0 +1,10 @@
+name,role,x_m,y_m,z_m,ue_x_cm,ue_y_cm,ue_z_cm,priority,weight_kg,source_candidate,notes
+S,warehouse,301.092,-559.692,2.190,30109.2,-55969.2,219.0,,0,warehouse_1,Waterfront pier/open ground for UAV takeoff and logistics warehouse
+D1,delivery,177.875,-401.400,21.009,17787.5,-40140.0,2100.9,normal,0.8,delivery_12,Near-port low rooftop for first normal delivery
+D2,delivery,-432.180,-56.580,54.200,-43218.0,-5658.0,5420.0,normal,1.0,delivery_9,Mid-city medium rooftop below 100 m for feasible 50/80/120 m altitude layers
+D3,delivery,-350.520,-316.921,42.817,-35052.0,-31692.1,4281.7,high,0.6,delivery_11,High-priority emergency rooftop below 100 m
+D4,delivery,-554.930,299.820,93.200,-55493.0,29982.0,9320.0,normal,1.2,delivery_7,Far rooftop to force longer mission and energy planning
+C,charging_station,-110.690,-186.284,71.157,-11069.0,-18628.4,7115.7,,0,charging_station_2,Central middle-high rooftop for fixed charging/communication station
+BS1,base_station,-73.284,76.465,40.216,-7328.4,7646.5,4021.6,,0,charging_station_1,Central rooftop/small-cell base station with antenna height under 50 m
+BS2,base_station,-198.715,300.600,35.000,-19871.5,30060.0,3500.0,,0,charging_station_6,Northwest low-rooftop mast for coverage diversity with antenna height under 50 m
+BS3,base_station,322.560,-400.840,45.214,32256.0,-40084.0,4521.4,,0,charging_station_8,Waterfront-side rooftop/small-cell base station with antenna height under 50 m

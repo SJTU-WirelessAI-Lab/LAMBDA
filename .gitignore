@@ -15,11 +15,14 @@ dist/
 
 data_import/
 data_export/
+data_export_nearfield/
 data_output/
 region_files/
 logs/
 docs/
 paper_drafts/
+
+configs/scenarios_nearfield.before_*.json
 
 *.log
 *.aux
