@@ -61,8 +61,9 @@ class PathTagTest(unittest.TestCase):
             profile_name="sub6_30k_1024",
         )
 
-        self.assertIn("/mimo_ofdm_csi/", output_dir)
-        self.assertIn("/rx1x1_tx4x4/sub6_30k_1024", output_dir)
+        output_parts = Path(output_dir).parts
+        self.assertIn("mimo_ofdm_csi", output_parts)
+        self.assertEqual(("rx1x1_tx4x4", "sub6_30k_1024"), output_parts[-2:])
         self.assertFalse(output_dir.endswith("multi_path_npz"))
 
 

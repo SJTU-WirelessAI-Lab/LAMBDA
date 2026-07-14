@@ -49,8 +49,8 @@ dev = [
 
 [project.urls]
 Homepage = "https://www.lambda6g.net/"
-Repository = "https://github.com/Zero2Light/LAMBDA"
-Issues = "https://github.com/Zero2Light/LAMBDA/issues"
+Repository = "https://github.com/SJTU-WirelessAI-Lab/LAMBDA"
+Issues = "https://github.com/SJTU-WirelessAI-Lab/LAMBDA/issues"
 
 [project.scripts]
 lambda-rf = "lambda_rf.cli:main"

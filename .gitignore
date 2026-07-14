@@ -19,6 +19,7 @@ data_export_nearfield/
 data_output/
 region_files/
 logs/
+runs/
 docs/
 paper_drafts/
 

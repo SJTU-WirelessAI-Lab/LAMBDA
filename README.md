@@ -66,13 +66,26 @@ is kept in this repository:
 notebooks/00_load_csi.ipynb
 notebooks/01_mimo_ofdm_csi.ipynb
 notebooks/02_generate_radar_and_visualize.ipynb
-notebooks/03_beam_label_generation.ipynb
-notebooks/04_localization_rgb_depth_baseline.ipynb
 ```
 
 Set the path variables in the first code cell of each notebook to point to your
 downloaded LAMBDA data. The notebooks use small limits by default so that users
 can verify paths before running a full split.
+
+## Paper Use Cases
+
+The paper's beam-prediction and cross-scene RGB plus LiDAR localization
+experiments are implemented under:
+
+```text
+examples/paper_use_cases/beam_prediction/
+examples/paper_use_cases/cross_scene_localization/
+```
+
+These examples use separate PyTorch dependencies and downloaded datasets, so
+they are not installed as part of the lightweight `lambda_rf` core package.
+See `examples/paper_use_cases/README.md` for data preparation, validation, and
+reproduction commands.
 
 ## Quick Start
 
