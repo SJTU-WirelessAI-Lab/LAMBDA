@@ -18,6 +18,53 @@ from lambda_rf.utils.array_csi import (
 
 
 C_M_S = 299_792_458.0
+DEFAULT_RCS_MODEL_FILENAMES = {
+    28.0e9: "default_drone_rcs_28ghz.h5",
+    77.0e9: "default_drone_rcs_77ghz.h5",
+}
+RCS_FREQUENCY_TOLERANCE_HZ = 1.0e6
+
+
+def _matching_supported_frequency(carrier_frequency_hz: float) -> float | None:
+    frequency = float(carrier_frequency_hz)
+    for supported in DEFAULT_RCS_MODEL_FILENAMES:
+        if abs(frequency - supported) <= RCS_FREQUENCY_TOLERANCE_HZ:
+            return supported
+    return None
+
+
+def resolve_rcs_model_path(
+    carrier_frequency_hz: float,
+    assets_root: str | Path,
+    explicit_path: str | Path | None = None,
+) -> Path:
+    """Resolve a frequency-matched RCS model and reject unsupported bands."""
+    if explicit_path is not None:
+        path = Path(explicit_path).expanduser().resolve()
+    else:
+        supported = _matching_supported_frequency(carrier_frequency_hz)
+        if supported is None:
+            known = ", ".join(f"{value / 1e9:g} GHz" for value in DEFAULT_RCS_MODEL_FILENAMES)
+            raise ValueError(
+                f"No calibrated drone RCS model is available at {carrier_frequency_hz / 1e9:g} GHz. "
+                f"Supported radar bands: {known}."
+            )
+        path = Path(assets_root).expanduser().resolve() / DEFAULT_RCS_MODEL_FILENAMES[supported]
+    if not path.is_file():
+        raise FileNotFoundError(f"RCS H5 file not found: {path}")
+    return path
+
+
+def _infer_rcs_frequency_hz(path: Path, handle: Any) -> float | None:
+    for key in ("carrier_frequency_hz", "frequency_hz", "frequency"):
+        if key in handle.attrs:
+            value = float(np.asarray(handle.attrs[key]).reshape(-1)[0])
+            if value > 0.0:
+                return value
+    match = re.search(r"(\d+(?:[p.]\d+)?)\s*ghz", path.name, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1).replace("p", ".")) * 1.0e9
+    return None
 
 
 def parse_frame_index(path: str | Path, prefix: str = "csi") -> int | None:
@@ -108,11 +155,19 @@ class IMURotationLoader:
     def __init__(self, imu_dir: str | Path | None):
         self.imu_dir = Path(imu_dir).expanduser().resolve() if imu_dir else None
         self.rotations: list[np.ndarray] = []
+        self.source_pattern = "identity"
         if self.imu_dir is None:
             return
-        files = sorted(self.imu_dir.glob("imu_*.json"))
+        files: list[Path] = []
+        for pattern in ("imu_*.json", "drone_pose_*.json", "pose_*.json"):
+            files = sorted(self.imu_dir.glob(pattern))
+            if files:
+                self.source_pattern = pattern
+                break
         if not files:
-            raise FileNotFoundError(f"No imu_*.json files found in {self.imu_dir}")
+            raise FileNotFoundError(
+                f"No imu_*.json, drone_pose_*.json, or pose_*.json files found in {self.imu_dir}"
+            )
         for path in files:
             with path.open("r", encoding="utf-8") as handle:
                 self.rotations.append(_orientation_to_rotation(json.load(handle), path))
@@ -125,21 +180,37 @@ class IMURotationLoader:
         idx = min(max(int(frame_idx), 0), len(self.rotations) - 1)
         return self.rotations[idx]
 
+    @property
+    def source_description(self) -> str:
+        if self.imu_dir is None:
+            return "identity"
+        return f"{self.imu_dir} ({self.source_pattern})"
+
 
 class ConstantRCSModel:
     def __init__(self, rcs_m2: float = 1.0):
         if rcs_m2 < 0.0:
             raise ValueError("rcs_m2 must be >= 0")
         self.rcs_m2 = float(rcs_m2)
+        self.component = "theta"
+        self.incident_polarization = "theta"
 
     def get_rcs(self, theta_deg: float, phi_deg: float) -> complex:
         return complex(self.rcs_m2, 0.0)
 
+    def get_scattering_amplitude(self, theta_deg: float, phi_deg: float) -> complex:
+        return complex(math.sqrt(self.rcs_m2 / (4.0 * math.pi)), 0.0)
+
 
 class H5RCSModel:
-    """H5 RCS pattern reader for the bundled AirSim default-drone model."""
+    """Read coherent FEKO scattering amplitudes for theta-polarized incidence."""
 
-    def __init__(self, h5_path: str | Path):
+    def __init__(
+        self,
+        h5_path: str | Path,
+        expected_frequency_hz: float | None = None,
+        component: str = "theta",
+    ):
         try:
             import h5py
         except ImportError as exc:
@@ -148,20 +219,38 @@ class H5RCSModel:
         path = Path(h5_path).expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"RCS H5 file not found: {path}")
+        component_normalized = str(component).strip().lower()
+        if component_normalized not in {"theta", "phi"}:
+            raise ValueError(f"RCS scattering component must be 'theta' or 'phi', got {component!r}")
+        group_name = "E_theta" if component_normalized == "theta" else "E_phi"
 
         with h5py.File(path, "r") as handle:
             self.theta_axis = np.asarray(handle["axes"]["theta"][:], dtype=np.float64).reshape(-1)
             self.phi_axis = np.asarray(handle["axes"]["phi"][:], dtype=np.float64).reshape(-1)
-            et_real = np.asarray(handle["E_theta"]["real"][:], dtype=np.float64)
-            et_imag = np.asarray(handle["E_theta"]["imag"][:], dtype=np.float64)
-        if et_real.shape == (self.phi_axis.size, self.theta_axis.size):
-            et_real = et_real.T
-            et_imag = et_imag.T
-        if et_real.shape != (self.theta_axis.size, self.phi_axis.size):
-            raise ValueError(f"Unexpected RCS grid shape {et_real.shape}")
-        self.values = et_real + 1j * et_imag
+            field_real = np.asarray(handle[group_name]["real"][:], dtype=np.float64)
+            field_imag = np.asarray(handle[group_name]["imag"][:], dtype=np.float64)
+            frequency_hz = _infer_rcs_frequency_hz(path, handle)
+        if field_real.shape == (self.phi_axis.size, self.theta_axis.size):
+            field_real = field_real.T
+            field_imag = field_imag.T
+        if field_real.shape != (self.theta_axis.size, self.phi_axis.size):
+            raise ValueError(f"Unexpected RCS grid shape {field_real.shape}")
+        if frequency_hz is None:
+            raise ValueError(
+                f"Cannot determine the RCS model frequency from H5 attributes or filename: {path}"
+            )
+        if expected_frequency_hz is not None and abs(frequency_hz - float(expected_frequency_hz)) > RCS_FREQUENCY_TOLERANCE_HZ:
+            raise ValueError(
+                f"RCS model frequency {frequency_hz / 1e9:g} GHz does not match radar/CSI frequency "
+                f"{float(expected_frequency_hz) / 1e9:g} GHz: {path}"
+            )
+        self.path = path
+        self.frequency_hz = frequency_hz
+        self.component = component_normalized
+        self.incident_polarization = "theta"
+        self.values = field_real + 1j * field_imag
 
-    def get_rcs(self, theta_deg: float, phi_deg: float) -> complex:
+    def get_scattering_amplitude(self, theta_deg: float, phi_deg: float) -> complex:
         theta = float(np.clip(theta_deg, self.theta_axis[0], self.theta_axis[-1]))
         phi = float(phi_deg) % 360.0
         if phi > self.phi_axis[-1]:
@@ -183,17 +272,24 @@ class H5RCSModel:
         v11 = self.values[ti + 1, pi + 1]
         return complex((1 - wt) * (1 - wp) * v00 + wt * (1 - wp) * v10 + (1 - wt) * wp * v01 + wt * wp * v11)
 
+    def get_rcs(self, theta_deg: float, phi_deg: float) -> float:
+        amplitude = self.get_scattering_amplitude(theta_deg, phi_deg)
+        return float(4.0 * math.pi * abs(amplitude) ** 2)
+
 @dataclass(frozen=True)
 class RadarSystem:
     f_c: float
-    bandwidth: float = 2.0e9
+    bandwidth: float = 1.0e9
     chirp_duration: float = 40.0e-6
     chirp_interval: float | None = None
-    num_chirps: int = 64
-    sample_rate: float = 204.8e6
-    noise_floor_dbm: float | None = -100.0
-    noise_figure_db: float = 0.0
+    num_chirps: int = 128
+    sample_rate: float = 100.0e6
+    noise_floor_dbm: float | None = None
+    noise_figure_db: float = 6.0
     noise_bandwidth_hz: float | None = None
+    tx_power_dbm: float = 30.0
+    tx_gain_db: float = 0.0
+    rx_gain_db: float = 0.0
 
     def __post_init__(self) -> None:
         if self.f_c <= 0.0:
@@ -208,6 +304,10 @@ class RadarSystem:
             raise ValueError("num_chirps must be > 0")
         if self.sample_rate <= 0.0:
             raise ValueError("sample_rate must be > 0")
+        if self.effective_noise_bandwidth_hz <= 0.0:
+            raise ValueError("noise bandwidth must be > 0")
+        if not all(math.isfinite(value) for value in (self.tx_power_dbm, self.tx_gain_db, self.rx_gain_db)):
+            raise ValueError("transmit power and antenna gains must be finite")
 
     @property
     def lambda_c(self) -> float:
@@ -247,6 +347,15 @@ class RadarSystem:
     def noise_std(self) -> float:
         return math.sqrt(self.noise_power_w / 2.0)
 
+    @property
+    def tx_power_w(self) -> float:
+        return 10.0 ** ((self.tx_power_dbm - 30.0) / 10.0)
+
+    @property
+    def signal_amplitude_scale(self) -> float:
+        gain_linear = 10.0 ** ((self.tx_gain_db + self.rx_gain_db) / 10.0)
+        return math.sqrt(self.tx_power_w * gain_linear)
+
     def params_array(self) -> np.ndarray:
         return np.asarray(
             [
@@ -279,8 +388,15 @@ def load_csi_paths(npz_path: str | Path, fallback_carrier_frequency_hz: float | 
     if a_real.size == 0:
         return None
 
-    a_complex = (a_real.astype(np.float64) + 1j * a_imag.astype(np.float64)).reshape(-1)
-    num_paths = a_complex.size
+    if a_real.ndim == 0:
+        raise ValueError(f"{path}: path coefficient arrays must include a path dimension")
+    num_paths = int(a_real.shape[-1])
+    if int(np.prod(a_real.shape[:-1], dtype=np.int64)) != 1:
+        raise ValueError(
+            f"{path}: radar expects representative 1x1 path-level CSI, got coefficient shape {a_real.shape}; "
+            "do not pass MIMO-expanded CSI"
+        )
+    a_complex = (a_real.astype(np.float64) + 1j * a_imag.astype(np.float64)).reshape(num_paths)
     valid = arrays.get("valid")
     if valid is not None and np.asarray(valid).shape == a_real.shape:
         mask = np.asarray(valid, dtype=bool).reshape(-1)
@@ -321,6 +437,10 @@ def load_csi_paths(npz_path: str | Path, fallback_carrier_frequency_hz: float | 
     }
     if result["carrier_frequency"] <= 0.0:
         raise ValueError(f"{path}: carrier_frequency is missing and no fallback was provided")
+    if result["path_interaction_count"] is None and result["interactions"] is not None:
+        interactions = np.asarray(result["interactions"])
+        axes = tuple(range(interactions.ndim - 1))
+        result["path_interaction_count"] = np.count_nonzero(interactions, axis=axes).astype(np.int32)
     return result
 
 
@@ -438,6 +558,8 @@ def radar_one_way_tau_by_antenna(
     interactions = _representative_path_steps(csi_data.get("interactions"), num_paths)
     vertices = _representative_path_steps(csi_data.get("vertices"), num_paths, vector_dim=3)
     path_interaction_count = csi_data.get("path_interaction_count")
+    if path_interaction_count is None and interactions is not None:
+        path_interaction_count = np.count_nonzero(interactions, axis=0).astype(np.int32)
 
     out = np.zeros((ant_abs.shape[0], num_paths), dtype=np.float64)
     for path_idx in range(num_paths):
@@ -502,14 +624,22 @@ def synthesize_radar_cube(
     z_body = np.clip(body_dirs[:, 2], -1.0, 1.0)
     theta_deg = np.degrees(np.arccos(z_body))
     phi_deg = np.degrees(np.arctan2(body_dirs[:, 1], body_dirs[:, 0]))
-    rcs_values = np.asarray([rcs_model.get_rcs(t, p) for t, p in zip(theta_deg, phi_deg)], dtype=np.complex128)
+    scattering_amplitudes = np.asarray(
+        [rcs_model.get_scattering_amplitude(t, p) for t, p in zip(theta_deg, phi_deg)],
+        dtype=np.complex128,
+    )
 
     if radar_world_to_local is not None:
         radar_world_to_local = np.asarray(radar_world_to_local, dtype=np.float64)
         if radar_world_to_local.shape != (3, 3):
             raise ValueError("radar_world_to_local must have shape (3, 3)")
 
-    coeff = (a_path ** 2) * np.sqrt(rcs_values)
+    coeff = (
+        radar_system.signal_amplitude_scale
+        * (a_path ** 2)
+        * (4.0 * np.pi / radar_system.lambda_c)
+        * scattering_amplitudes
+    )
     if model == ARRAY_MODEL_SPHERICAL:
         two_way_tau = 2.0 * radar_one_way_tau_by_antenna(
             csi_data=csi_data,
@@ -574,5 +704,16 @@ def load_radar_npz(npz_path: str | Path) -> tuple[np.ndarray, dict[str, Any], np
             "gt_pos": data["gt_pos"] if "gt_pos" in data else None,
             "gt_vel": data["gt_vel"] if "gt_vel" in data else None,
             "source_csi_path": str(data["source_csi_path"]) if "source_csi_path" in data else "",
+            "radar_array_shape": data["radar_array_shape"] if "radar_array_shape" in data else None,
+            "radar_spacing_wavelengths": (
+                float(np.asarray(data["radar_spacing_wavelengths"]).reshape(-1)[0])
+                if "radar_spacing_wavelengths" in data
+                else None
+            ),
+            "radar_mount_yaw_pitch_roll_deg": (
+                data["radar_mount_yaw_pitch_roll_deg"]
+                if "radar_mount_yaw_pitch_roll_deg" in data
+                else None
+            ),
         }
     return cube, info, radar_params

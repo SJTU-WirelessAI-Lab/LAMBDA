@@ -106,12 +106,18 @@ def run_radar(args: argparse.Namespace) -> None:
         noise_floor_dbm=args.noise_floor_dbm,
         noise_figure_db=args.noise_figure_db,
         noise_bandwidth_hz=args.noise_bandwidth,
+        noise_seed=args.noise_seed,
+        tx_power_dbm=args.tx_power_dbm,
+        tx_gain_db=args.tx_gain_db,
+        rx_gain_db=args.rx_gain_db,
         array_shape=args.array_shape,
         spacing_wavelengths=args.spacing_wavelengths,
         radar_yaw_deg=args.radar_yaw,
         radar_pitch_deg=args.radar_pitch,
         radar_roll_deg=args.radar_roll,
         add_noise=args.add_noise,
+        rcs_model_path=args.rcs_model,
+        rcs_component=args.rcs_component,
         array_model=args.array_model,
         skip_existing=args.skip_existing,
         start_frame=args.start_frame,
@@ -183,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     radar_cmd.add_argument("--scenario", help="Scenario key in configs/scenarios.json.")
     radar_cmd.add_argument("--input-dir", required=True, help="Input directory containing csi_*.npz.")
     radar_cmd.add_argument("--output-dir", help="Output directory for radar_*.npz files.")
-    radar_cmd.add_argument("--imu-dir", help="Optional directory containing imu_*.json orientation files.")
+    radar_cmd.add_argument("--imu-dir", help="Optional directory containing IMU or drone pose orientation JSON files.")
     radar_cmd.add_argument("--carrier-frequency", type=float, help="Carrier frequency in Hz. Defaults to CSI/config.")
     radar_cmd.add_argument("--bandwidth", type=float, help="FMCW bandwidth in Hz.")
     radar_cmd.add_argument("--sample-rate", type=float, help="ADC sample rate in Hz.")
@@ -194,6 +200,10 @@ def build_parser() -> argparse.ArgumentParser:
     radar_cmd.add_argument("--noise-floor-dbm", type=float, help="Noise floor in dBm.")
     radar_cmd.add_argument("--noise-figure-db", type=float, help="Receiver noise figure in dB when thermal noise is derived.")
     radar_cmd.add_argument("--noise-bandwidth", type=float, help="Noise bandwidth in Hz. Defaults to sample rate.")
+    radar_cmd.add_argument("--noise-seed", type=int, help="Seed for deterministic receiver noise.")
+    radar_cmd.add_argument("--tx-power-dbm", type=float, help="Radar transmit power in dBm.")
+    radar_cmd.add_argument("--tx-gain-db", type=float, help="Transmit antenna/front-end gain in dB.")
+    radar_cmd.add_argument("--rx-gain-db", type=float, help="Receive antenna/front-end gain in dB.")
     radar_cmd.add_argument("--array-shape", help="Radar virtual array shape as ROWS,COLS or ROWSxCOLS.")
     radar_cmd.add_argument("--spacing-wavelengths", type=float, help="Array spacing in wavelengths.")
     radar_cmd.add_argument("--radar-yaw", type=float, help="Radar mount yaw in degrees.")
@@ -205,7 +215,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="far-field",
         help="Radar array wavefront model. spherical-wave uses per-antenna path lengths from CSI path_vertices.",
     )
-    radar_cmd.add_argument("--add-noise", action="store_true", default=None, help="Add complex Gaussian receiver noise.")
+    noise_group = radar_cmd.add_mutually_exclusive_group()
+    noise_group.add_argument("--add-noise", dest="add_noise", action="store_true", default=None, help="Add complex Gaussian receiver noise.")
+    noise_group.add_argument("--no-noise", dest="add_noise", action="store_false", help="Disable receiver noise.")
+    radar_cmd.add_argument("--rcs-model", help="Explicit frequency-matched FEKO H5 model. Defaults to the bundled 28/77 GHz model.")
+    radar_cmd.add_argument(
+        "--rcs-component",
+        choices=["theta", "phi"],
+        default="theta",
+        help="Scattered field component for theta-linear incidence; theta is co-polar and phi is cross-polar.",
+    )
     radar_cmd.add_argument("--start-frame", type=int, help="Only process frames at or after this index.")
     radar_cmd.add_argument("--limit", type=int, help="Maximum number of files to process.")
     radar_cmd.add_argument("--frame-step", type=int, default=1, help="Process every Nth CSI file.")

@@ -20,7 +20,8 @@ examples/                  Runnable CSI loading and label generation examples
 notebooks/                 Tutorial notebooks matching the website walkthroughs
 configs/scenarios.json     Example utility configuration
 scripts/                   CSI packaging helpers
-assets/default_drone_rcs.h5
+assets/default_drone_rcs_28ghz.h5
+assets/default_drone_rcs_77ghz.h5
 tests/                     Unit tests for CSI readers and post-processing math
 CONFIG.md                  Configuration reference for the public utilities
 CITATION.cff               Citation metadata
@@ -118,17 +119,15 @@ python -m lambda_rf mimo-ofdm-csi \
   --array-model spherical-wave
 ```
 
-Generate FMCW radar raw cubes from released path-level CSI. The AirSim default
-drone RCS model is bundled at `assets/default_drone_rcs.h5` and is used by the
-`radar` command to keep the radar modality consistent with the released sensing
-modalities:
+Generate FMCW radar raw cubes from released 28 GHz path-level CSI. Frequency-
+matched AirSim default-drone FEKO models are bundled for 28 and 77 GHz:
 
 ```bash
 python -m lambda_rf radar \
-  --input-dir path/to/csi/f60p0GHz_V \
-  --output-dir path/to/radar_raw/f60p0GHz_V \
+  --input-dir path/to/csi/f28p0GHz_V \
+  --output-dir path/to/radar_raw/f28p0GHz_V \
   --imu-dir path/to/imu \
-  --chirp-interval 4.8e-5 \
+  --chirp-interval 5e-5 \
   --add-noise
 ```
 
@@ -136,14 +135,15 @@ python -m lambda_rf radar \
 `--idle-time` to specify only the gap after each chirp. Radar also accepts
 `--array-model spherical-wave` to use per-radar-antenna near-field delays from
 the same `path_vertices` and `path_interaction_count` fields used by MIMO OFDM
-CSI.
+CSI. Theta-linear incidence uses coherent `E_theta`; unsupported radar bands,
+including 60 GHz, fail until a matching RCS H5 is provided.
 
 Render Range-Doppler, Range-Azimuth, and Range-Elevation images:
 
 ```bash
 python -m lambda_rf radar-vis \
-  --input-dir path/to/radar_raw/f60p0GHz_V \
-  --output-dir path/to/radar_vis/f60p0GHz_V
+  --input-dir path/to/radar_raw/f28p0GHz_V \
+  --output-dir path/to/radar_vis/f28p0GHz_V
 ```
 
 The website tutorials provide the narrative walkthroughs that correspond to

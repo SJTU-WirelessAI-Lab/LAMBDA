@@ -53,7 +53,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "data_weather": "Sunny",
         "station_name": "BS1",
         "trajectory_name": "trajectory_000",
-        "carrier_frequency": 60.0e9,
+        "carrier_frequency": 28.0e9,
         "tx_polarization": "V",
         "tx_array_shape": [4, 4],
         "rx_array_shape": [1, 1],
@@ -61,17 +61,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "subcarrier_profiles": DEFAULT_SUBCARRIER_PROFILES,
         "default_subcarrier_profile": "sub6_30k_1024",
         "radar": {
-            "bandwidth": 2.0e9,
-            "sample_rate": 204.8e6,
+            "bandwidth": 1.0e9,
+            "sample_rate": 100.0e6,
             "chirp_duration": 40.0e-6,
-            "chirp_interval": 48.0e-6,
-            "num_chirps": 64,
-            "add_noise": False,
-            "noise_floor_dbm": -100.0,
+            "chirp_interval": 50.0e-6,
+            "num_chirps": 128,
+            "add_noise": True,
+            "noise_floor_dbm": None,
             "noise_figure_db": 6.0,
-            "noise_bandwidth_hz": None,
+            "noise_bandwidth_hz": 100.0e6,
+            "noise_seed": 0,
+            "tx_power_dbm": 12.0,
+            "tx_gain_db": 25.0,
+            "rx_gain_db": 25.0,
             "array_shape": [4, 4],
-            "spacing_wavelengths": 0.5
+            "spacing_wavelengths": 0.49
         },
         "radar_mount": {
             "yaw": -180.0,
@@ -161,7 +165,11 @@ def _shape_from_mapping(mapping: dict[str, Any], key: str, default: tuple[int, i
 DESCRIPTION = str(_CFG.get("description", ""))
 OUTPUT_ROOT = str(Path(_expand_path(str(_CFG.get("output_root", "${SERVER_ROOT}/data_export")))).resolve())
 TX_POSE_PATH = _optional_path("tx_pose_path")
-RCS_MODEL_PATH = str((ASSETS_ROOT / "default_drone_rcs.h5").resolve())
+RCS_MODEL_PATHS = {
+    28.0e9: str((ASSETS_ROOT / "default_drone_rcs_28ghz.h5").resolve()),
+    77.0e9: str((ASSETS_ROOT / "default_drone_rcs_77ghz.h5").resolve()),
+}
+RCS_MODEL_PATH = RCS_MODEL_PATHS.get(float(_CFG.get("carrier_frequency", 28.0e9)), "")
 
 SCENE_NAME = str(_CFG.get("scene_name", "Example"))
 SCENARIO_NAME = str(_CFG.get("scenario_name", SCENARIO_KEY))
@@ -169,7 +177,7 @@ DATA_WEATHER = str(_CFG.get("data_weather", "Sunny"))
 STATION_NAME = str(_CFG.get("station_name", "BS1"))
 TRAJECTORY_NAME = str(_CFG.get("trajectory_name", "trajectory_000"))
 
-CARRIER_FREQUENCY = float(_CFG.get("carrier_frequency", 60.0e9))
+CARRIER_FREQUENCY = float(_CFG.get("carrier_frequency", 28.0e9))
 TX_POLARIZATION = str(_CFG.get("tx_polarization", "V"))
 WEATHER_DICT = dict(_CFG.get("weather", {"kind": "clear", "include_gaseous_absorption": False}))
 
@@ -185,20 +193,20 @@ DEFAULT_SUBCARRIER_PROFILE = str(_CFG.get("default_subcarrier_profile", "sub6_30
 RADAR_CFG = dict(_CFG.get("radar", {}))
 RADAR_MOUNT = dict(_CFG.get("radar_mount", {}))
 RADAR_SETTINGS = {
-    "bandwidth": float(RADAR_CFG.get("bandwidth", 2.0e9)),
-    "sample_rate": float(RADAR_CFG.get("sample_rate", 204.8e6)),
+    "bandwidth": float(RADAR_CFG.get("bandwidth", 1.0e9)),
+    "sample_rate": float(RADAR_CFG.get("sample_rate", 100.0e6)),
     "chirp_duration": float(RADAR_CFG.get("chirp_duration", 40.0e-6)),
     "chirp_interval": (
         None
         if RADAR_CFG.get("chirp_interval") is None
         else float(RADAR_CFG.get("chirp_interval"))
     ),
-    "num_chirps": int(RADAR_CFG.get("num_chirps", 64)),
-    "add_noise": bool(RADAR_CFG.get("add_noise", False)),
+    "num_chirps": int(RADAR_CFG.get("num_chirps", 128)),
+    "add_noise": bool(RADAR_CFG.get("add_noise", True)),
     "noise_floor_dbm": (
         None
-        if RADAR_CFG.get("noise_floor_dbm", -100.0) is None
-        else float(RADAR_CFG.get("noise_floor_dbm", -100.0))
+        if RADAR_CFG.get("noise_floor_dbm") is None
+        else float(RADAR_CFG.get("noise_floor_dbm"))
     ),
     "noise_figure_db": float(RADAR_CFG.get("noise_figure_db", 0.0)),
     "noise_bandwidth_hz": (
@@ -206,9 +214,13 @@ RADAR_SETTINGS = {
         if RADAR_CFG.get("noise_bandwidth_hz") is None
         else float(RADAR_CFG.get("noise_bandwidth_hz"))
     ),
+    "noise_seed": int(RADAR_CFG.get("noise_seed", 0)),
+    "tx_power_dbm": float(RADAR_CFG.get("tx_power_dbm", 12.0)),
+    "tx_gain_db": float(RADAR_CFG.get("tx_gain_db", 25.0)),
+    "rx_gain_db": float(RADAR_CFG.get("rx_gain_db", 25.0)),
 }
 RADAR_ARRAY_SHAPE = _shape_from_mapping(RADAR_CFG, "array_shape", (4, 4))
-RADAR_SPACING_WAVELENGTHS = float(RADAR_CFG.get("spacing_wavelengths", 0.5))
+RADAR_SPACING_WAVELENGTHS = float(RADAR_CFG.get("spacing_wavelengths", 0.49))
 RADAR_MOUNT = {
     "yaw": float(RADAR_MOUNT.get("yaw", -180.0)),
     "pitch": float(RADAR_MOUNT.get("pitch", 40.0)),

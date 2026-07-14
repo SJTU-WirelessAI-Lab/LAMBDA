@@ -183,12 +183,17 @@ fields. The CSV export is useful for quick inspection and plotting.
 ## Radar Signal Generation
 
 `radar` synthesizes FMCW radar cubes from released path-level CSI files. It does
-not require scene XML files. It always uses the bundled AirSim default-drone RCS
-model:
+not require scene XML files. It selects a frequency-matched AirSim default-drone
+FEKO model from:
 
 ```text
-assets/default_drone_rcs.h5
+assets/default_drone_rcs_28ghz.h5
+assets/default_drone_rcs_77ghz.h5
 ```
+
+The FEKO excitation is theta-linear. The default co-polar response is the
+complex `E_theta` field, with `sigma_theta=4*pi*|E_theta|^2`. A radar carrier
+without a matching H5, including 60 GHz, is rejected before synthesis.
 
 Install radar dependencies first:
 
@@ -200,8 +205,8 @@ Generate radar raw files:
 
 ```bash
 python -m lambda_rf radar \
-  --input-dir path/to/csi/f60p0GHz_V \
-  --output-dir path/to/radar_raw/f60p0GHz_V \
+  --input-dir path/to/csi/f28p0GHz_V \
+  --output-dir path/to/radar_raw/f28p0GHz_V \
   --imu-dir path/to/imu
 ```
 
@@ -210,11 +215,16 @@ The same defaults can be stored under `common.radar` in
 `chirp_duration`, `chirp_interval`, `add_noise`, noise parameters, and
 `array_shape`.
 
+The default 28 GHz profile uses a 1 GHz sweep, 100 MHz complex ADC rate, 40 us
+ramp, 50 us PRI, 128 chirps, and a 4x4 array at 0.49 center wavelengths. This
+gives approximately 0.15 m range resolution, 300 m positive-beat unambiguous
+range, 0.84 m/s velocity resolution, and 53.5 m/s unambiguous speed.
+
 Useful options:
 
 | Option | Meaning |
 | --- | --- |
-| `--imu-dir` | Optional directory containing `imu_*.json` orientation files. Identity orientation is used when omitted. |
+| `--imu-dir` | Optional directory containing `imu_*.json`, `drone_pose_*.json`, or `pose_*.json` orientation files. Identity orientation is used when omitted. |
 | `--bandwidth` | FMCW bandwidth in Hz. |
 | `--sample-rate` | ADC sample rate in Hz. |
 | `--chirp-duration` | Chirp duration in seconds. |
@@ -224,8 +234,13 @@ Useful options:
 | `--noise-floor-dbm` | Receiver noise floor in dBm. Use config `null` to derive thermal noise from bandwidth and noise figure. |
 | `--noise-figure-db` | Receiver noise figure in dB when thermal noise is derived. |
 | `--noise-bandwidth` | Noise bandwidth in Hz. Defaults to the ADC sample rate. |
-| `--add-noise` | Add complex Gaussian receiver noise before the range FFT. |
+| `--noise-seed` | Seed for deterministic receiver noise. |
+| `--add-noise` / `--no-noise` | Enable or disable complex Gaussian receiver noise before the range FFT. |
+| `--tx-power-dbm`, `--tx-gain-db`, `--rx-gain-db` | Signal power and front-end gain calibration. |
 | `--array-shape` | Radar virtual array shape, default `4,4`. |
+| `--spacing-wavelengths` | Center-frequency array spacing; default `0.49`. |
+| `--rcs-model` | Explicit frequency-matched FEKO H5 override. |
+| `--rcs-component` | `theta` co-polar or `phi` cross-polar field for theta incidence. |
 | `--radar-yaw`, `--radar-pitch`, `--radar-roll` | Radar mount orientation in degrees. |
 | `--array-model` | `far-field` for plane-wave steering, or `spherical-wave` for per-antenna near-field delays from CSI `path_vertices`. |
 
@@ -241,9 +256,13 @@ Output NPZ fields include:
 | `radar_add_noise` | scalar bool | Whether receiver noise was added. |
 | `radar_noise_floor_dbm` | scalar | Effective receiver noise floor in dBm. |
 | `radar_noise_power_w` / `radar_noise_std` | scalar | Complex Gaussian noise power and per-real-component standard deviation. |
+| `radar_tx_power_dbm`, `radar_tx_gain_db`, `radar_rx_gain_db` | scalar | Signal power/gain calibration. |
 | `radar_array_pos` | `(ant, 3)` | Virtual array element positions in meters. |
 | `radar_array_shape` | `(2,)` | `[rows, cols]`. |
-| `rcs_model` | scalar string | `airsim_default_drone`. |
+| `rcs_model` | scalar string | Frequency-matched FEKO H5 path. |
+| `rcs_frequency_hz` | scalar | FEKO model frequency. |
+| `rcs_incident_polarization` / `rcs_scattering_component` | scalar string | Theta-linear excitation and selected coherent field. |
+| `radar_signal_unit` | scalar string | `sqrt_w_after_range_fft`. |
 | `radar_array_model` | scalar string | `far-field` or `spherical-wave`. |
 | `radar_model` | scalar string | Radar synthesis model identifier. |
 | `source_csi_path` | scalar string | Source CSI file path. |
@@ -256,8 +275,8 @@ from `radar_*.npz` files:
 
 ```bash
 python -m lambda_rf radar-vis \
-  --input-dir path/to/radar_raw/f60p0GHz_V \
-  --output-dir path/to/radar_vis/f60p0GHz_V
+  --input-dir path/to/radar_raw/f28p0GHz_V \
+  --output-dir path/to/radar_vis/f28p0GHz_V
 ```
 
 It writes:
@@ -272,8 +291,19 @@ GT overlay is available when radar files include `gt_pos/gt_vel`:
 
 ```bash
 python -m lambda_rf radar-vis \
-  --input-dir path/to/radar_raw/f60p0GHz_V \
-  --output-dir path/to/radar_vis/f60p0GHz_V \
+  --input-dir path/to/radar_raw/f28p0GHz_V \
+  --output-dir path/to/radar_vis/f28p0GHz_V \
   --show-gt \
   --bs-position 0,0,0
 ```
+
+RA/RE FFT axes are planar-array direction angles `asin(u_y)` and `asin(u_z)`.
+A single planar array cannot resolve front/back ambiguity. With only four
+elements per dimension, a target is therefore expected to appear as a broad
+angular main lobe at one range bin rather than a compact point in RA/RE.
+
+The one-way CSI coefficients are normalized as voltage channel coefficients.
+Production uses the reciprocal-path approximation
+`sqrt(Pt*Gt*Gr) * a^2 * (4*pi/lambda) * E_theta`; its squared magnitude matches
+the monostatic radar equation. See `scripts/dev_radar_rcs_calibration.py` and
+`scripts/dev_radar_visual_calibration.py` for numerical checks.
