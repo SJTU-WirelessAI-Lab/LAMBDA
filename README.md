@@ -1,6 +1,9 @@
-# LAMBDA
+# LAMBDA: A Low-Altitude Multimodal Base Dataset for UAV Sensing and Communication
 
-Utility code for the LAMBDA low-altitude UAV multimodal dataset paper.
+LAMBDA is a high-fidelity multimodal base dataset for low-altitude UAV sensing
+and communication, providing synchronized wireless, visual, motion, LiDAR, and
+radar resources across shared trajectories, coordinate systems, and frame
+indices.
 
 This repository helps dataset users inspect released CSI files and run common
 post-processing steps used by the tutorials and paper experiments, including
