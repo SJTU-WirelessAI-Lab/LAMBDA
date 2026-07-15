@@ -4,41 +4,28 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
+from .config import FORMAL_BACKBONE
+
 
 class RGBBeamNet(nn.Module):
     def __init__(
         self,
         n_classes: int = 64,
-        pretrained: bool = True,
-        dropout: float = 0.25,
-        backbone: str = "resnet18",
+        backbone: str = FORMAL_BACKBONE,
     ) -> None:
         super().__init__()
-        if backbone == "resnet18":
-            try:
-                weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-                net = models.resnet18(weights=weights)
-            except Exception:
-                net = models.resnet18(pretrained=pretrained)
-            in_dim = net.fc.in_features
-            net.fc = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_dim, n_classes))
-        elif backbone == "resnet50_paper":
-            # Match the public paper repository: build a ResNet-50 with the
-            # target number of beam classes, initialize the replacement fc
-            # layer with Xavier normal and zero bias, then load ImageNet
-            # weights with fc skipped.
-            net = models.resnet50(weights=None, num_classes=n_classes)
-            in_dim = net.fc.in_features
-            init_beam_head(net.fc, official_resnet50=True)
-            if pretrained:
-                state = torch.hub.load_state_dict_from_url(
-                    "https://download.pytorch.org/models/resnet50-19c8e357.pth",
-                    progress=True,
-                )
-                state = {k: v for k, v in state.items() if not k.startswith("fc.")}
-                net.load_state_dict(state, strict=False)
-        else:
-            raise ValueError(f"Unknown backbone {backbone!r}")
+        if backbone != FORMAL_BACKBONE:
+            raise ValueError(f"The released experiment uses backbone={FORMAL_BACKBONE!r}")
+        # Formal model: ImageNet-initialized ResNet-50 with a freshly
+        # initialized 64-way classification head.
+        net = models.resnet50(weights=None, num_classes=n_classes)
+        init_beam_head(net.fc)
+        state = torch.hub.load_state_dict_from_url(
+            "https://download.pytorch.org/models/resnet50-19c8e357.pth",
+            progress=True,
+        )
+        state = {k: v for k, v in state.items() if not k.startswith("fc.")}
+        net.load_state_dict(state, strict=False)
         self.net = net
         self.backbone = backbone
 
@@ -47,15 +34,12 @@ class RGBBeamNet(nn.Module):
 
 
 def model_file_stem(backbone: str) -> str:
-    if backbone == "resnet50_paper":
-        return "rgb60_resnet50_paper"
-    return "rgb60_resnet18"
+    if backbone != FORMAL_BACKBONE:
+        raise ValueError(f"The released experiment uses backbone={FORMAL_BACKBONE!r}")
+    return "rgb60_resnet50_paper"
 
 
 def assert_model_structure(model: nn.Module, n_classes: int) -> None:
-    backbone = getattr(model, "backbone", "")
-    if backbone != "resnet50_paper":
-        return
     net = getattr(model, "net", None)
     head = getattr(net, "fc", None)
     if not isinstance(head, nn.Linear):
@@ -70,8 +54,8 @@ def assert_model_structure(model: nn.Module, n_classes: int) -> None:
         )
 
 
-def init_beam_head(module: nn.Module, official_resnet50: bool = False) -> None:
-    if official_resnet50 and isinstance(module, nn.Linear):
+def init_beam_head(module: nn.Module) -> None:
+    if isinstance(module, nn.Linear):
         nn.init.xavier_normal_(module.weight, gain=1.0)
         if module.bias is not None:
             nn.init.constant_(module.bias, 0.0)
@@ -84,6 +68,5 @@ def reset_beam_head(model: nn.Module) -> None:
     head = getattr(getattr(model, "net", None), "fc", None)
     if head is None:
         raise RuntimeError("Model does not expose net.fc task head")
-    official_resnet50 = getattr(model, "backbone", "") == "resnet50_paper"
     for module in head.modules():
-        init_beam_head(module, official_resnet50=official_resnet50)
+        init_beam_head(module)

@@ -58,30 +58,20 @@ def directions_world_to_photo_frame(
     vec_world: np.ndarray,
     R_cam: np.ndarray,
     scene: str = "",
-    codebook_frame: str = "photo",
+    codebook_frame: str = "sky_up",
 ) -> np.ndarray:
-    """Map UE world direction vectors to the photo frame used by the codebook.
-
-    Most LAMBDA z-trace scenes use RoofCam local +X as the photo optical axis
-    and local +Y as image right. Square_3 stores the camera with local +Z as
-    the optical axis; keep the same photo convention by remapping local
-    (X,Y,Z) -> photo (Z,Y,-X).
-    """
+    """Map world directions into the formal sky-up ULA codebook frame."""
+    if codebook_frame != "sky_up":
+        raise ValueError("The released beam-prediction experiment uses the sky_up codebook frame")
     vec_world = vec_world.astype(np.float64)
     local = vec_world @ R_cam.T
-    if codebook_frame == "sky_up":
-        # Sky-pointing 1D ULA: broadside is UE-world +Z and the array scans
-        # along the photo horizontal right direction.  For a ULA, the phase is
-        # controlled by the projection onto the array axis; synthesize a
-        # forward/right pair whose atan2 gives asin(projection).
-        right = np.clip(local[:, 1], -1.0, 1.0)
-        forward = np.sqrt(np.maximum(0.0, 1.0 - right * right))
-        return np.stack([forward, right, np.zeros_like(right)], axis=1)
-    if codebook_frame != "photo":
-        raise ValueError(f"Unknown codebook frame {codebook_frame!r}")
-    if scene == "Square_3":
-        return np.stack([local[:, 2], local[:, 1], -local[:, 0]], axis=1)
-    return local
+    # Sky-pointing 1D ULA: broadside is UE-world +Z and the array scans
+    # along the photo horizontal right direction. For a ULA, the phase is
+    # controlled by the projection onto the array axis; synthesize a
+    # forward/right pair whose atan2 gives asin(projection).
+    right = np.clip(local[:, 1], -1.0, 1.0)
+    forward = np.sqrt(np.maximum(0.0, 1.0 - right * right))
+    return np.stack([forward, right, np.zeros_like(right)], axis=1)
 
 
 class PhotoULACodebook:
@@ -119,7 +109,7 @@ class PhotoULACodebook:
         csi_npz: Dict[str, np.ndarray],
         R_cam: np.ndarray,
         scene: str = "",
-        codebook_frame: str = "photo",
+        codebook_frame: str = "sky_up",
     ) -> Tuple[int, float]:
         """Return (best_beam, strongest_path_angle_deg).
 

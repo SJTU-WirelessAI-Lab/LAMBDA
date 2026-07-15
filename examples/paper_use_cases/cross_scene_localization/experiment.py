@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from .config import ExperimentSpec
+from .config import FORMAL_SCALE_UNIT, ExperimentSpec
 from .data import RGBHeatmapDataset
 from .evaluation import (
     evaluate_gt2d_lidar,
@@ -42,17 +42,13 @@ def summarize_row(exp_name: str, method: str, metrics: Dict[str, float], extra: 
 
 
 def get_scale_run_tag(args) -> str:
-    if getattr(args, "scale_unit", "count_per_height") == "percent_uv":
-        pct = getattr(args, "train_scale_percent", None)
-        if pct is None:
-            pct = 100.0
-        pct_str = (f"{float(pct):g}").replace(".", "p")
-        return f"train_pct_{pct_str}"
-    val = getattr(args, "train_max_samples_per_height", None)
-    return f"train_count_{val if val is not None else 'all'}"
+    if args.scale_unit != FORMAL_SCALE_UNIT:
+        raise ValueError(f"Expected scale_unit={FORMAL_SCALE_UNIT!r}, got {args.scale_unit!r}")
+    pct_str = f"{float(args.train_scale_percent):g}".replace(".", "p")
+    return f"train_global_pct_{pct_str}"
 
 
-def run_one_method(exp: ExperimentSpec, train_samples: List[Dict[str, Any]], val_samples: List[Dict[str, Any]], test_samples: List[Dict[str, Any]], args, device) -> Dict[str, Any]:
+def run_one_method(exp: ExperimentSpec, train_samples: List[Dict[str, Any]], val_samples: List[Dict[str, Any]], test_samples: List[Dict[str, Any]], args, device) -> List[Dict[str, Any]]:
     seed_everything(args.seed)
     test_ds = RGBHeatmapDataset(test_samples, args.img_size, args.hm_size, args.hm_sigma, augment=False, allow_hflip=False)
     test_loader = make_loader(test_ds, args.batch_size, shuffle=False, num_workers=args.num_workers, drop_last=False)
@@ -60,24 +56,6 @@ def run_one_method(exp: ExperimentSpec, train_samples: List[Dict[str, Any]], val
     model = create_model(args).to(device)
     if torch.cuda.device_count() > 1 and not args.no_dataparallel:
         model = nn.DataParallel(model)
-
-    if args.control_mode == "untrained":
-        print(f"[{exp.name} | rgb_lidar_untrained] evaluating random-initialized model")
-        test_metrics, test_details = evaluate_model_with_lidar(model, test_loader, device, args.img_size, args, "pred2d_lidar_untrained")
-        method_name = "rgb_lidar_untrained"
-        method_dir = os.path.join(args.out_dir, exp.name, f"{get_scale_run_tag(args)}_test_scale_{args.test_max_samples_per_height}_seed_{args.seed}_{args.model_backbone}", method_name)
-        os.makedirs(method_dir, exist_ok=True)
-        pd.DataFrame([{"epoch": 0, "control_mode": "untrained"}]).to_csv(os.path.join(method_dir, "train_val_curve.csv"), index=False)
-        details_path = os.path.join(method_dir, "test_details.csv")
-        test_details.to_csv(details_path, index=False)
-        make_prediction_montage(test_details, os.path.join(method_dir, "test_prediction_montage.jpg"), max_images=args.montage_samples)
-        return summarize_row(exp.name, method_name, test_metrics, {
-            "control_mode": "untrained", "model_backbone": args.model_backbone, "sampling_mode": args.scale_unit, "train_scale_percent": args.train_scale_percent, "train_n": len(train_samples), "val_n": len(val_samples), "test_n": len(test_samples), "train_scale_per_height": args.train_max_samples_per_height, "test_scale_per_height": args.test_max_samples_per_height, "test_seed": args.test_seed, "val_seed": args.val_seed, "split_seed": args.split_seed, "subset_seed": args.subset_seed, "seed": args.seed, "best_epoch": 0, "selection_metric": "none_untrained",
-            "test_details_path": details_path,
-        })
-
-    if args.control_mode != "normal":
-        raise ValueError(f"run_one_method only handles normal/untrained; got {args.control_mode}")
 
     train_ds = RGBHeatmapDataset(train_samples, args.img_size, args.hm_size, args.hm_sigma, augment=True, allow_hflip=args.allow_hflip)
     val_ds = RGBHeatmapDataset(val_samples, args.img_size, args.hm_size, args.hm_sigma, augment=False, allow_hflip=False)
@@ -198,24 +176,6 @@ def run_experiment(exp: ExperimentSpec, args, device) -> List[Dict[str, Any]]:
     exp_dir = os.path.join(args.out_dir, exp.name, f"{get_scale_run_tag(args)}_test_scale_{args.test_max_samples_per_height}_seed_{args.seed}_{args.model_backbone}")
     os.makedirs(exp_dir, exist_ok=True)
 
-    if args.audit_sampling_only:
-        audit = getattr(args, "_last_sampling_audit", {}) or {}
-        row = summarize_row(exp.name, "sampling_audit_only", {}, {
-            "control_mode": "audit",
-            "model_backbone": args.model_backbone,
-            "sampling_mode": args.scale_unit,
-            "train_scale_percent": args.train_scale_percent,
-            "train_scale_per_height": args.train_max_samples_per_height,
-            "test_scale_per_height": args.test_max_samples_per_height,
-            "seed": args.seed,
-            "val_seed": args.val_seed,
-            "split_seed": args.split_seed,
-            "subset_seed": args.subset_seed,
-            "test_seed": args.test_seed,
-            **audit,
-        })
-        return [row]
-
     g_metrics, g_df = baseline_pixel_results(train_samples, test_samples, by_height=False)
     h_metrics, h_df = baseline_pixel_results(train_samples, test_samples, by_height=True)
     g_df.to_csv(os.path.join(exp_dir, "global_mean_pixel_baseline_test_details.csv"), index=False)
@@ -225,28 +185,8 @@ def run_experiment(exp: ExperimentSpec, args, device) -> List[Dict[str, Any]]:
     print(f"[{exp.name} | global_mean_pixel_baseline | TEST] center={g_metrics['mean_px']:.2f}px PCK@16={g_metrics['pck@16']:.3f}")
     print(f"[{exp.name} | height_mean_pixel_baseline | TEST] center={h_metrics['mean_px']:.2f}px PCK@16={h_metrics['pck@16']:.3f}")
 
-    # Always include GT-2D + LiDAR upper bound unless explicitly skipped.
-    if not args.no_gt2d_lidar:
-        rows.append(run_gt2d_lidar(exp, test_samples, args, train_n=len(train_samples), val_n=len(val_samples)))
-
-    def _append_result(obj):
-        if isinstance(obj, list):
-            rows.extend(obj)
-        else:
-            rows.append(obj)
-
-    if args.control_mode in ("normal", "untrained"):
-        _append_result(run_one_method(exp, train_samples, val_samples, test_samples, args, device))
-    elif args.control_mode == "all":
-        original_mode = args.control_mode
-        args.control_mode = "normal"
-        _append_result(run_one_method(exp, train_samples, val_samples, test_samples, args, device))
-        args.control_mode = "untrained"
-        _append_result(run_one_method(exp, train_samples, val_samples, test_samples, args, device))
-        args.control_mode = original_mode
-    elif args.control_mode == "gt2d_lidar":
-        # Already evaluated above. No model run.
-        pass
-    else:
-        raise ValueError(f"Unknown control mode: {args.control_mode}")
+    # The paper protocol includes the GT-2D + LiDAR upper bound, the two simple
+    # pixel baselines above, and the trained RGB-LiDAR model.
+    rows.append(run_gt2d_lidar(exp, test_samples, args, train_n=len(train_samples), val_n=len(val_samples)))
+    rows.extend(run_one_method(exp, train_samples, val_samples, test_samples, args, device))
     return rows

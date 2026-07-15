@@ -10,7 +10,16 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from .artifacts import build_test_dataset, build_train_dataset, load_beam_head, save_checkpoint
-from .config import DATA_ROOT_DEFAULT, DEEPSENSE_ROOT_DEFAULT
+from .config import (
+    DATA_ROOT_DEFAULT,
+    DEEPSENSE_ROOT_DEFAULT,
+    FORMAL_BACKBONE,
+    FORMAL_CODEBOOK_FRAME,
+    FORMAL_DEEPSENSE_LABEL_SOURCE,
+    FORMAL_LAMBDA_LABEL_MODE,
+    FORMAL_TEST_DATASET,
+    FORMAL_TRAIN_SCENE,
+)
 from .data import DeepSenseRGB60BeamDataset
 from .geometry import PhotoULACodebook
 from .models import RGBBeamNet, assert_model_structure, model_file_stem
@@ -30,7 +39,7 @@ from .training import (
 )
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--data-root",
@@ -49,33 +58,23 @@ def main() -> None:
         help="DeepSense Scenario 23 root, or set DEEPSENSE_ROOT.",
     )
     parser.add_argument("--deepsense_csv", default="scenario23.csv")
-    parser.add_argument("--deepsense_label_source", choices=["csv", "power"], default="csv")
-    parser.add_argument("--train_scenes", nargs="+", default=["Open_Ground"])
-    parser.add_argument("--test_dataset", choices=["deepsense"], default="deepsense")
+    parser.add_argument("--deepsense_label_source", choices=[FORMAL_DEEPSENSE_LABEL_SOURCE], default=FORMAL_DEEPSENSE_LABEL_SOURCE)
+    parser.add_argument("--train_scenes", nargs="+", choices=[FORMAL_TRAIN_SCENE], default=[FORMAL_TRAIN_SCENE])
+    parser.add_argument("--test_dataset", choices=[FORMAL_TEST_DATASET], default=FORMAL_TEST_DATASET)
     parser.add_argument("--n_ant", type=int, default=16)
     parser.add_argument("--n_beams", type=int, default=64)
     parser.add_argument("--codebook_fov", type=float, default=90.0)
     parser.add_argument(
         "--lambda_label_mode",
-        choices=["strongest_path_angle", "beamspace"],
-        default="strongest_path_angle",
-        help=(
-            "LAMBDA label source. strongest_path_angle maps the strongest "
-            "60GHz path AoA to the photo-horizontal codebook, preserving "
-            "RGB/CSI left-to-right alignment. beamspace uses a coherent "
-            "1x16 ULA beamforming oracle over all paths."
-        ),
+        choices=[FORMAL_LAMBDA_LABEL_MODE],
+        default=FORMAL_LAMBDA_LABEL_MODE,
+        help="Map the strongest 60 GHz path AoA to the 64-beam label space.",
     )
     parser.add_argument(
         "--lambda_codebook_frame",
-        choices=["photo", "sky_up"],
-        default="photo",
-        help=(
-            "Frame used to map LAMBDA CSI directions into the 1D ULA codebook. "
-            "photo centers the 90 deg codebook on the RGB optical axis. "
-            "sky_up centers it on UE-world +Z while preserving the photo-horizontal "
-            "right direction for beam ordering."
-        ),
+        choices=[FORMAL_CODEBOOK_FRAME],
+        default=FORMAL_CODEBOOK_FRAME,
+        help="Use the formal sky-up ULA codebook while preserving image-horizontal beam ordering.",
     )
     parser.add_argument("--stride", type=int, default=3, help="LAMBDA train frame stride.")
     parser.add_argument("--test_stride", type=int, default=1, help="DeepSense test frame stride.")
@@ -93,12 +92,11 @@ def main() -> None:
         default=110.0,
         help="Assumed RGB horizontal FoV used by --center_codebook_crop.",
     )
-    parser.add_argument("--backbone", choices=["resnet18", "resnet50_paper"], default="resnet18")
+    parser.add_argument("--backbone", choices=[FORMAL_BACKBONE], default=FORMAL_BACKBONE)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--dropout", type=float, default=0.25)
     parser.add_argument("--optimizer", choices=["adamw", "adam"], default="adamw")
     parser.add_argument("--scheduler", choices=["cosine", "paper_step"], default="cosine")
     parser.add_argument("--lr_milestones", type=int, nargs="+", default=[4, 8, 12])
@@ -107,7 +105,6 @@ def main() -> None:
     parser.add_argument("--ft_scheduler", choices=["cosine", "paper_step"], default="cosine")
     parser.add_argument("--ft_lr_milestones", type=int, nargs="+", default=[4, 8, 12])
     parser.add_argument("--ft_lr_gamma", type=float, default=0.1)
-    parser.add_argument("--no_pretrained", action="store_true")
     parser.add_argument("--no_amp", action="store_true")
     parser.add_argument("--log_interval", type=int, default=200)
     parser.add_argument(
@@ -129,7 +126,7 @@ def main() -> None:
     parser.add_argument("--do_zero_shot", action="store_true", default=True)
     parser.add_argument("--no_zero_shot", dest="do_zero_shot", action="store_false")
     parser.add_argument("--do_few_shot", action="store_true")
-    parser.add_argument("--k_shots", type=int, nargs="+", default=[64, 256, 1024])
+    parser.add_argument("--k_shots", type=int, nargs="+", default=[64, 128, 256, 512, 1024])
     parser.add_argument(
         "--few_shot_sampling",
         choices=["stratified", "coverage_distribution"],
@@ -147,13 +144,26 @@ def main() -> None:
     parser.add_argument("--few_shot_save_ckpts", action="store_true")
     parser.add_argument(
         "--few_shot_reset_head",
+        dest="few_shot_reset_head",
         action="store_true",
+        default=True,
         help="Reinitialize the 64-way beam head before each DeepSense K-shot fine-tune.",
+    )
+    parser.add_argument(
+        "--no_few_shot_reset_head",
+        dest="few_shot_reset_head",
+        action="store_false",
+        help="Keep the LAMBDA-trained beam head for DeepSense K-shot fine-tuning.",
     )
     parser.add_argument("--no_few_shot_auto_schedule", dest="few_shot_auto_schedule", action="store_false")
     parser.set_defaults(few_shot_auto_schedule=True)
     parser.add_argument("--load_ckpt", default=None)
     parser.add_argument("--load_head_ckpt", default=None)
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.load_ckpt and args.load_head_ckpt:
@@ -207,16 +217,13 @@ def main() -> None:
 
     model = RGBBeamNet(
         n_classes=args.n_beams,
-        pretrained=not args.no_pretrained,
-        dropout=args.dropout,
         backbone=args.backbone,
     )
     assert_model_structure(model, args.n_beams)
-    if args.backbone == "resnet50_paper":
-        print(
-            "Paper RGB model structure: torchvision ResNet-50 backbone + "
-            f"Linear(2048, {args.n_beams}) task head, end-to-end fine-tuning."
-        )
+    print(
+        "Paper RGB model structure: torchvision ResNet-50 backbone + "
+        f"Linear(2048, {args.n_beams}) task head, end-to-end fine-tuning."
+    )
     class_weights = class_weights_from_labels(train_labels, args.n_beams) if args.weighted_loss else None
 
     save_dir = Path(args.save_dir)
@@ -228,8 +235,8 @@ def main() -> None:
         "task": "RGB photo -> 60GHz beam",
         "model": {
             "backbone": args.backbone,
-            "pretrained": not args.no_pretrained,
-            "head": "Linear(2048, n_beams)" if args.backbone == "resnet50_paper" else "Dropout + Linear(512, n_beams)",
+            "pretrained": True,
+            "head": "Linear(2048, n_beams)",
             "optimizer": args.optimizer,
             "scheduler": args.scheduler,
             "lr_milestones": args.lr_milestones,
@@ -245,7 +252,6 @@ def main() -> None:
         "initialization": (
             "full_checkpoint" if args.load_ckpt else
             "imagenet_backbone_lambda_head" if args.load_head_ckpt else
-            "random_backbone_random_head" if args.no_pretrained else
             "imagenet_backbone_random_head"
         ),
         "codebook": {

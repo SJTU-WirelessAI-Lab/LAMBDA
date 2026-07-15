@@ -15,4 +15,12 @@ SCENE_PATHS = {
 }
 
 
+FORMAL_TRAIN_SCENE = "Open_Ground"
+FORMAL_TEST_DATASET = "deepsense"
+FORMAL_BACKBONE = "resnet50_paper"
+FORMAL_CODEBOOK_FRAME = "sky_up"
+FORMAL_LAMBDA_LABEL_MODE = "strongest_path_angle"
+FORMAL_DEEPSENSE_LABEL_SOURCE = "csv"
+
+
 FRAME_RE = re.compile(r"(\d{6})")

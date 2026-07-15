@@ -4,7 +4,8 @@ import json
 import math
 import os
 import random
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -61,12 +62,136 @@ def build_R_ned(pitch_deg: float, yaw_deg: float, roll_deg: float = 0.0) -> np.n
     return euler_to_R_ned(pitch_deg, yaw_deg, roll_deg)
 
 
-def load_sensor_position(scene_root: str, sensor_name: str) -> np.ndarray:
+def _load_sensor_pose(scene_root: str, sensor_name: str) -> Tuple[np.ndarray, dict]:
     pose_path = os.path.join(scene_root, "sensors", f"{sensor_name}_world_pose.json")
     with open(pose_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    if data.get("sensor_name") != sensor_name:
+        raise ValueError(
+            f"Expected sensor_name={sensor_name!r} in {pose_path}, "
+            f"got {data.get('sensor_name')!r}."
+        )
     pos = data["world_transform"]["position"]
-    return np.array([pos["x"], pos["y"], pos["z"]], dtype=np.float32)
+    orientation = data["world_transform"]["orientation"]
+    return np.array([pos["x"], pos["y"], pos["z"]], dtype=np.float32), orientation
+
+
+def load_sensor_position(scene_root: str, sensor_name: str) -> np.ndarray:
+    position, _ = _load_sensor_pose(scene_root, sensor_name)
+    return position
+
+
+def _quaternion_to_rotation(orientation: dict) -> np.ndarray:
+    q = np.array(
+        [orientation["w"], orientation["x"], orientation["y"], orientation["z"]],
+        dtype=np.float64,
+    )
+    norm = float(np.linalg.norm(q))
+    if norm == 0:
+        raise ValueError("Sensor orientation quaternion has zero norm.")
+    w, x, y, z = q / norm
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _sensor_pose_rotation(params: dict) -> np.ndarray:
+    """Rotation order used by the released AirSim sensor-pose JSON files."""
+    pitch = math.radians(float(params["pitch"]))
+    yaw = math.radians(float(params["yaw"]))
+    roll = math.radians(float(params.get("roll", 0.0)))
+    ry = np.array(
+        [[math.cos(pitch), 0, math.sin(pitch)], [0, 1, 0], [-math.sin(pitch), 0, math.cos(pitch)]],
+        dtype=np.float64,
+    )
+    rz = np.array(
+        [[math.cos(yaw), -math.sin(yaw), 0], [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    rx = np.array(
+        [[1, 0, 0], [0, math.cos(roll), -math.sin(roll)], [0, math.sin(roll), math.cos(roll)]],
+        dtype=np.float64,
+    )
+    return ry @ rz @ rx
+
+
+def _rotation_error_degrees(actual: np.ndarray, expected: np.ndarray) -> float:
+    cosine = (float(np.trace(expected.T @ actual)) - 1.0) / 2.0
+    return math.degrees(math.acos(float(np.clip(cosine, -1.0, 1.0))))
+
+
+def validate_sensor_configuration(
+    scene_roots: Sequence[str],
+    position_tolerance_m: float = 1e-3,
+    orientation_tolerance_deg: float = 0.05,
+    expected_image_size: Tuple[int, int] = (IMG_W, IMG_H),
+) -> None:
+    """Fail before training if prepared data no longer match audited sensor constants."""
+    from PIL import Image
+
+    errors = []
+    for scene_root in dict.fromkeys(scene_roots):
+        try:
+            cam_position, cam_orientation = _load_sensor_pose(scene_root, "RoofCam")
+            lidar_position, lidar_orientation = _load_sensor_pose(scene_root, "RoofLidar")
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            errors.append(f"{scene_root}: cannot read sensor poses: {exc}")
+            continue
+
+        expected_lidar_position = SCENE_LIDAR_SETTINGS_WORLD[scene_root]
+        lidar_position_error = float(np.linalg.norm(lidar_position - expected_lidar_position))
+        if lidar_position_error > position_tolerance_m:
+            errors.append(
+                f"{scene_root}: RoofLidar position differs from the audited setting by "
+                f"{lidar_position_error:.6f} m"
+            )
+
+        colocation_error = float(np.linalg.norm(cam_position - lidar_position))
+        if colocation_error > position_tolerance_m:
+            errors.append(
+                f"{scene_root}: RoofCam and RoofLidar are not co-located "
+                f"({colocation_error:.6f} m apart)"
+            )
+
+        cam_rotation_error = _rotation_error_degrees(
+            _quaternion_to_rotation(cam_orientation),
+            _sensor_pose_rotation(SCENE_CAM_PARAMS[scene_root]),
+        )
+        if cam_rotation_error > orientation_tolerance_deg:
+            errors.append(
+                f"{scene_root}: RoofCam orientation differs from the audited setting by "
+                f"{cam_rotation_error:.6f} deg"
+            )
+
+        lidar_rotation_error = _rotation_error_degrees(
+            _quaternion_to_rotation(lidar_orientation),
+            _sensor_pose_rotation(SCENE_LIDAR_PARAMS[scene_root]),
+        )
+        if lidar_rotation_error > orientation_tolerance_deg:
+            errors.append(
+                f"{scene_root}: RoofLidar orientation differs from the audited setting by "
+                f"{lidar_rotation_error:.6f} deg"
+            )
+
+        image_path = next(Path(scene_root, "cam").glob("img_*.png"), None)
+        if image_path is None:
+            errors.append(f"{scene_root}: no extracted cam/img_*.png frame found")
+        else:
+            with Image.open(image_path) as image:
+                if image.size != expected_image_size:
+                    errors.append(
+                        f"{scene_root}: {image_path.name} has size {image.size}, "
+                        f"expected {expected_image_size}"
+                    )
+
+    if errors:
+        raise RuntimeError("Sensor configuration check failed:\n- " + "\n- ".join(errors))
+    print(f"Sensor configuration check: PASS ({len(dict.fromkeys(scene_roots))} scenes)")
 
 
 def load_camera_pose(scene_root: str) -> Tuple[np.ndarray, np.ndarray]:

@@ -91,46 +91,36 @@ def split_fixed_val_train_pool_by_height_uv(
     return train_pool, val_out
 
 
-def select_nested_train_subset_by_height_uv_percent(
+def select_nested_train_subset_global_percent(
     train_pool: List[Dict[str, Any]],
     scale_percent: Optional[float],
     subset_seed: int,
     args,
 ) -> List[Dict[str, Any]]:
-    """Select nested subset by taking the same percentage prefix from each stratum.
+    """Select a deterministic nested percentage of the complete train pool.
 
-    For a fixed seed and pool, 10% is a subset of 25%, 25% of 50%, and so on,
-    because every stratum uses a deterministic permutation and each scale takes
-    a prefix of that permutation.
+    For a fixed seed and pool, each smaller percentage is a strict prefix of
+    every larger percentage. The fixed validation split remains stratified by
+    scene, height, and image location before this global selection is applied.
     """
     ratio = 1.0 if scale_percent is None else float(scale_percent) / 100.0
     ratio = max(0.0, min(1.0, ratio))
-    grouped: Dict[Tuple[str, str, int, int], List[Dict[str, Any]]] = defaultdict(list)
-    for s in train_pool:
-        grouped[get_uv_stratum_key(s, args)].append(s)
-
-    selected: List[Dict[str, Any]] = []
-    for key, hs in sorted(grouped.items()):
-        scene, h, v_bin, u_bin = key
-        hs = sorted(hs, key=lambda x: int(x["fid_int"]))
-        rng = random.Random(_stable_group_seed(subset_seed, scene, h, str(v_bin), str(u_bin), "nested_subset_uv"))
-        rng.shuffle(hs)
-        n = len(hs)
-        if ratio >= 1.0:
-            take_n = n
-        else:
-            take_n = int(math.floor(n * ratio))
-            if args.min_one_per_nonempty_stratum and ratio > 0 and n > 0:
-                take_n = max(1, take_n)
-            take_n = min(take_n, n)
-        chosen = hs[:take_n]
-        selected.extend(chosen)
-        if chosen:
-            print(
-                f"  [nested uv subset {scene} {h} vbin={v_bin} ubin={u_bin}] "
-                f"selected={len(chosen)}/{n} ratio={ratio:.3f}"
-            )
-    random.Random(_stable_group_seed(subset_seed, "final_train_shuffle_uv", str(scale_percent))).shuffle(selected)
+    ordered = sorted(
+        train_pool,
+        key=lambda s: (str(s.get("scene", "")), str(s.get("height", "")), int(s.get("fid_int", 0))),
+    )
+    random.Random(_stable_group_seed(subset_seed, "nested_subset_global_percent")).shuffle(ordered)
+    n_total = len(ordered)
+    take_n = n_total if ratio >= 1.0 else int(round(n_total * ratio))
+    take_n = max(0, min(take_n, n_total))
+    selected = ordered[:take_n]
+    random.Random(
+        _stable_group_seed(subset_seed, "final_train_shuffle_global_percent", str(scale_percent))
+    ).shuffle(selected)
+    print(
+        f"  [nested global subset] selected={len(selected)}/{n_total} "
+        f"target_ratio={ratio:.4f} actual_ratio={len(selected) / max(n_total, 1):.4f}"
+    )
     return selected
 
 
@@ -186,8 +176,8 @@ def write_sampling_audit(
     val_samples: List[Dict[str, Any]],
     test_samples: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Write CSV files auditing the V19.7 sampling distributions."""
-    scale_value = args.train_scale_percent if args.scale_unit == "percent_uv" else args.train_max_samples_per_height
+    """Write CSV files auditing the v20 global-sampling distributions."""
+    scale_value = args.train_scale_percent
     audit_dir = os.path.join(args.out_dir, exp.name, "sampling_audit", f"scale_{scale_value}_seed_{args.seed}_{args.model_backbone}")
     os.makedirs(audit_dir, exist_ok=True)
 
@@ -251,111 +241,38 @@ def write_sampling_audit(
     return {"sampling_audit_dir": audit_dir, **compare}
 
 
-def split_fixed_val_train_pool_by_height(
-    samples: List[Dict[str, Any]],
-    val_ratio: float,
-    split_seed: int,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Create a fixed validation set and a train pool, stratified by scene/height.
-
-    This is the key V19.7 learning-curve fix: for a fixed split seed, the validation
-    set is created once from the full source set before any scale cap is applied.
-    Different train scales are then drawn as nested subsets from the remaining
-    train pool, while validation remains identical for that seed.
-    """
-    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
-    for s in samples:
-        grouped[(s["scene"], s["height"])].append(s)
-
-    train_pool: List[Dict[str, Any]] = []
-    val_out: List[Dict[str, Any]] = []
-    for (scene, h), hs in sorted(grouped.items()):
-        hs = sorted(hs, key=lambda x: int(x["fid_int"]))
-        rng = random.Random(_stable_group_seed(split_seed, scene, h, "val_split"))
-        rng.shuffle(hs)
-        n = len(hs)
-        if n < 2:
-            train_pool.extend(hs)
-            continue
-        n_val = max(1, int(round(n * val_ratio)))
-        n_val = min(n_val, n - 1)
-        val_part = sorted(hs[:n_val], key=lambda x: int(x["fid_int"]))
-        train_part = sorted(hs[n_val:], key=lambda x: int(x["fid_int"]))
-        train_pool.extend(train_part)
-        val_out.extend(val_part)
-        print(
-            f"  [fixed val split {scene} {h}] train_pool={len(train_part)} "
-            f"val={len(val_part)} train_fid_span={train_part[0]['fid']}..{train_part[-1]['fid']} "
-            f"val_fid_span={val_part[0]['fid']}..{val_part[-1]['fid']}"
-        )
-    return train_pool, val_out
-
-
-def select_nested_train_subset_by_height(
-    train_pool: List[Dict[str, Any]],
-    max_samples_per_height: Optional[int],
-    subset_seed: int,
-) -> List[Dict[str, Any]]:
-    """Select nested stratified train subset from a fixed train pool.
-
-    For the same seed and train pool, scale=N always takes the first N samples
-    from each scene/height group's deterministic permutation. Therefore smaller
-    subsets are strict subsets of larger ones.
-    """
-    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
-    for s in train_pool:
-        grouped[(s["scene"], s["height"])].append(s)
-
-    selected: List[Dict[str, Any]] = []
-    for (scene, h), hs in sorted(grouped.items()):
-        hs = sorted(hs, key=lambda x: int(x["fid_int"]))
-        rng = random.Random(_stable_group_seed(subset_seed, scene, h, "nested_subset"))
-        rng.shuffle(hs)
-        take_n = len(hs) if max_samples_per_height is None else min(int(max_samples_per_height), len(hs))
-        chosen = hs[:take_n]
-        selected.extend(chosen)
-        if chosen:
-            fid_sorted = sorted(chosen, key=lambda x: int(x["fid_int"]))
-            print(
-                f"  [nested train subset {scene} {h}] selected={len(chosen)}/{len(hs)} "
-                f"fid_span={fid_sorted[0]['fid']}..{fid_sorted[-1]['fid']}"
-            )
-    random.Random(_stable_group_seed(subset_seed, "final_train_shuffle")).shuffle(selected)
-    return selected
-
-
 def build_train_val_test_samples(exp: ExperimentSpec, args) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    train_roots = exp.train_roots if exp.train_roots is not None else (exp.train_root,)
-    source_samples: List[Dict[str, Any]] = []
-    source_skipped_total = Counter()
-
-    # Build full source set first. Do NOT apply scale cap here, otherwise
-    # learning-curve subsets would not share a fixed validation/test protocol.
-    for ri, root in enumerate(train_roots):
-        ss, sk = build_scene_index(root, exp.train_heights, args.img_size, args.frame_stride,
-                                   None, args.seed + ri * 1000,
-                                   require_lidar_file=args.require_lidar_file)
-        print_dataset_summary(f"{exp.name}_source_full_{SCENE_NAMES.get(root, os.path.basename(root))}", ss, sk)
-        source_samples.extend(ss)
-        source_skipped_total.update(sk)
+    # Build the full Block 1 source set before applying the fixed validation
+    # split. Every scale therefore shares the same validation and test sets.
+    source_samples, source_skipped = build_scene_index(
+        exp.train_root,
+        exp.train_heights,
+        args.img_size,
+        args.frame_stride,
+        None,
+        args.seed,
+        require_lidar_file=args.require_lidar_file,
+    )
+    print_dataset_summary(
+        f"{exp.name}_source_full_{SCENE_NAMES.get(exp.train_root, os.path.basename(exp.train_root))}",
+        source_samples,
+        source_skipped,
+    )
 
     test_samples, test_skipped = build_scene_index(exp.test_root, exp.test_heights, args.img_size, args.frame_stride,
                                                    args.test_max_samples_per_height, args.test_seed,
                                                    require_lidar_file=args.require_lidar_file)
-    print_dataset_summary(f"{exp.name}_source_full_before_fixed_val_split_COMBINED", source_samples, source_skipped_total)
+    print_dataset_summary(f"{exp.name}_source_full_before_fixed_val_split", source_samples, source_skipped)
 
-    split_seed = args.val_seed
-    if args.scale_unit == "percent_uv":
-        train_pool, val_samples = split_fixed_val_train_pool_by_height_uv(source_samples, args.val_ratio, split_seed, args)
-        train_samples = select_nested_train_subset_by_height_uv_percent(train_pool, args.train_scale_percent, args.subset_seed, args)
-    elif args.scale_unit == "count_per_height":
-        train_pool, val_samples = split_fixed_val_train_pool_by_height(source_samples, args.val_ratio, split_seed)
-        train_samples = select_nested_train_subset_by_height(train_pool, args.train_max_samples_per_height, args.subset_seed)
-    else:
-        raise ValueError(f"Unknown scale_unit: {args.scale_unit}")
+    train_pool, val_samples = split_fixed_val_train_pool_by_height_uv(
+        source_samples, args.val_ratio, args.split_seed, args
+    )
+    train_samples = select_nested_train_subset_global_percent(
+        train_pool, args.train_scale_percent, args.subset_seed, args
+    )
 
     print_dataset_summary(f"{exp.name}_train_pool_full_after_fixed_val", train_pool, Counter({"after_fixed_val_split": len(train_pool)}))
-    print_dataset_summary(f"{exp.name}_train_nested_scale_{args.train_scale_percent if args.scale_unit == 'percent_uv' else args.train_max_samples_per_height}", train_samples, Counter({"nested_subset_from_train_pool": len(train_samples)}))
+    print_dataset_summary(f"{exp.name}_train_nested_global_pct_{args.train_scale_percent}", train_samples, Counter({"nested_subset_from_train_pool": len(train_samples)}))
     print_dataset_summary(f"{exp.name}_val_fixed", val_samples, Counter({"fixed_val_split": len(val_samples)}))
     print_dataset_summary(f"{exp.name}_test_fixed", test_samples, test_skipped)
 

@@ -13,7 +13,13 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from .config import FRAME_RE, SCENE_PATHS
+from .config import (
+    FORMAL_CODEBOOK_FRAME,
+    FORMAL_DEEPSENSE_LABEL_SOURCE,
+    FORMAL_LAMBDA_LABEL_MODE,
+    FRAME_RE,
+    SCENE_PATHS,
+)
 from .geometry import PhotoULACodebook, load_roofcam_pose
 
 
@@ -32,12 +38,14 @@ class LambdaRGB60BeamDataset(Dataset):
         rgb_hfov: float = 110.0,
         cache_dir: Optional[str] = "runs/cache_rgb60",
         limit: Optional[int] = None,
-        label_mode: str = "strongest_path_angle",
-        codebook_frame: str = "photo",
+        label_mode: str = FORMAL_LAMBDA_LABEL_MODE,
+        codebook_frame: str = FORMAL_CODEBOOK_FRAME,
     ) -> None:
         super().__init__()
-        if label_mode not in {"strongest_path_angle", "beamspace"}:
-            raise ValueError("label_mode must be 'strongest_path_angle' or 'beamspace'")
+        if label_mode != FORMAL_LAMBDA_LABEL_MODE:
+            raise ValueError(f"The released experiment uses label_mode={FORMAL_LAMBDA_LABEL_MODE!r}")
+        if codebook_frame != FORMAL_CODEBOOK_FRAME:
+            raise ValueError(f"The released experiment uses codebook_frame={FORMAL_CODEBOOK_FRAME!r}")
         if scene not in SCENE_PATHS:
             raise KeyError(f"Unknown LAMBDA scene {scene!r}; choices={list(SCENE_PATHS)}")
         self.scene = scene
@@ -115,16 +123,13 @@ class LambdaRGB60BeamDataset(Dataset):
         t0 = time.time()
         for i, fid in enumerate(self.frames):
             with np.load(self.csi60_dir / f"csi_{fid}.npz") as data:
-                beamspace_label, angle = self.codebook.best_beam_from_csi(
+                _, angle = self.codebook.best_beam_from_csi(
                     {k: data[k] for k in data.keys()},
                     self.R_cam,
                     self.scene,
                     self.codebook_frame,
                 )
-            if self.label_mode == "strongest_path_angle":
-                labels[i] = self.codebook.angle_to_index(np.array([angle]))[0]
-            else:
-                labels[i] = beamspace_label
+            labels[i] = self.codebook.angle_to_index(np.array([angle]))[0]
             angles[i] = angle
             if (i + 1) % 2000 == 0:
                 rate = (i + 1) / (time.time() - t0)
@@ -155,6 +160,24 @@ class LambdaRGB60BeamDataset(Dataset):
         }
 
 
+def validate_deepsense_beam_labels(
+    rows: List[Dict[str, object]],
+    n_beams: int = 64,
+) -> np.ndarray:
+    """Convert one-based DeepSense labels after validating their declared range."""
+    labels_one_based = np.array([int(row["unit1_beam_index"]) for row in rows], dtype=np.int64)
+    invalid = np.flatnonzero((labels_one_based < 1) | (labels_one_based > n_beams))
+    if invalid.size:
+        i = int(invalid[0])
+        frame = rows[i].get("index", i)
+        value = int(labels_one_based[i])
+        raise ValueError(
+            f"DeepSense unit1_beam_index must be in [1, {n_beams}]; "
+            f"frame {frame!r} has {value}."
+        )
+    return labels_one_based - 1
+
+
 class DeepSenseRGB60BeamDataset(Dataset):
     """DeepSense scenario23 RGB + 60 GHz beam labels."""
 
@@ -168,12 +191,12 @@ class DeepSenseRGB60BeamDataset(Dataset):
         center_codebook_crop: bool = False,
         rgb_hfov: float = 110.0,
         codebook_fov: float = 90.0,
-        label_source: str = "csv",
+        label_source: str = FORMAL_DEEPSENSE_LABEL_SOURCE,
         limit: Optional[int] = None,
     ) -> None:
         super().__init__()
-        if label_source not in {"csv", "power"}:
-            raise ValueError("label_source must be 'csv' or 'power'")
+        if label_source != FORMAL_DEEPSENSE_LABEL_SOURCE:
+            raise ValueError(f"The released experiment uses label_source={FORMAL_DEEPSENSE_LABEL_SOURCE!r}")
         self.root = Path(deepsense_root)
         self.scene = "DeepSense_scenario23"
         rows = self._read_csv(self.root / csv_name)[:: max(1, stride)]
@@ -187,14 +210,7 @@ class DeepSenseRGB60BeamDataset(Dataset):
             if not p.is_file():
                 raise FileNotFoundError(f"Missing DeepSense RGB image: {p}")
 
-        labels = []
-        for r in rows:
-            if label_source == "csv":
-                labels.append(int(r["unit1_beam_index"]) - 1)
-            else:
-                pwr = np.loadtxt(self.root / r["unit1_pwr_60ghz"])
-                labels.append(int(np.argmax(pwr)))
-        self.labels = np.clip(np.array(labels, dtype=np.int64), 0, 63)
+        self.labels = validate_deepsense_beam_labels(rows)
         self.frames = [str(r["index"]) for r in rows]
         self.img_tf = build_image_transform(
             img_size,
@@ -209,7 +225,7 @@ class DeepSenseRGB60BeamDataset(Dataset):
         if not csv_path.is_file():
             raise FileNotFoundError(f"DeepSense CSV not found: {csv_path}")
         out: List[Dict[str, object]] = []
-        required = ("index", "unit1_rgb", "unit1_pwr_60ghz", "unit1_beam_index")
+        required = ("index", "unit1_rgb", "unit1_beam_index")
         with open(csv_path) as f:
             reader = csv.DictReader(f)
             missing = [c for c in required if c not in (reader.fieldnames or [])]
@@ -220,7 +236,6 @@ class DeepSenseRGB60BeamDataset(Dataset):
                     {
                         "index": int(r["index"]),
                         "unit1_rgb": r["unit1_rgb"].lstrip("./"),
-                        "unit1_pwr_60ghz": r["unit1_pwr_60ghz"].lstrip("./"),
                         "unit1_beam_index": int(r["unit1_beam_index"]),
                     }
                 )

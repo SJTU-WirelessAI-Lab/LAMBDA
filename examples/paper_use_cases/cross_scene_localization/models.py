@@ -3,7 +3,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models
+
+from .config import FORMAL_MODEL_BACKBONE
 
 
 def gn(channels: int) -> nn.GroupNorm:
@@ -76,69 +77,7 @@ class RGBHeatmapUNet(nn.Module):
         return hm_logits
 
 
-class ResNet18Heatmap(nn.Module):
-    """ResNet18 encoder + lightweight deconvolution heatmap head.
-
-    This is intended as a stronger, standard vision baseline. With
-    pretrained=True, the encoder is initialized from ImageNet weights. The output
-    is a single-channel heatmap at hm_size.
-    """
-    def __init__(self, hm_size: int = 128, img_size: int = 512, pretrained: bool = False):
-        super().__init__()
-        self.hm_size = hm_size
-        self.img_size = img_size
-        weights = None
-        if pretrained:
-            try:
-                weights = models.ResNet18_Weights.IMAGENET1K_V1
-            except Exception:
-                weights = None
-        try:
-            backbone = models.resnet18(weights=weights)
-        except Exception as e:
-            if pretrained:
-                raise RuntimeError(
-                    "Requested --model-backbone resnet18_imagenet, but ImageNet weights could not be loaded. "
-                    "For paper experiments this must not silently fall back to random init. "
-                    "Please pre-download/cache torchvision ResNet18 weights or use --model-backbone resnet18_scratch."
-                ) from e
-            backbone = models.resnet18(weights=None)
-        self.stem = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
-        self.layer1 = backbone.layer1
-        self.layer2 = backbone.layer2
-        self.layer3 = backbone.layer3
-        self.layer4 = backbone.layer4
-        self.head = nn.Sequential(
-            nn.Conv2d(512, 256, 3, padding=1, bias=False), gn(256), nn.GELU(),
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1, bias=False), gn(128), nn.GELU(),  # 16 -> 32
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, bias=False), gn(64), nn.GELU(),    # 32 -> 64
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1, bias=False), gn(32), nn.GELU(),     # 64 -> 128
-            nn.Conv2d(32, 1, 1),
-        )
-        # Initialize newly added head.
-        for m in self.head.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
-                if getattr(m, "bias", None) is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.stem(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        hm_logits = self.head(x)
-        if hm_logits.shape[-1] != self.hm_size:
-            hm_logits = F.interpolate(hm_logits, size=(self.hm_size, self.hm_size), mode="bilinear", align_corners=False)
-        return hm_logits
-
-
 def create_model(args) -> nn.Module:
-    if args.model_backbone == "rgb_unet":
-        return RGBHeatmapUNet(base=args.base_channels, hm_size=args.hm_size, img_size=args.img_size)
-    if args.model_backbone == "resnet18_scratch":
-        return ResNet18Heatmap(hm_size=args.hm_size, img_size=args.img_size, pretrained=False)
-    if args.model_backbone == "resnet18_imagenet":
-        return ResNet18Heatmap(hm_size=args.hm_size, img_size=args.img_size, pretrained=True)
-    raise ValueError(f"Unknown model_backbone: {args.model_backbone}")
+    if args.model_backbone != FORMAL_MODEL_BACKBONE:
+        raise ValueError(f"The released experiment uses model_backbone={FORMAL_MODEL_BACKBONE!r}")
+    return RGBHeatmapUNet(base=args.base_channels, hm_size=args.hm_size, img_size=args.img_size)

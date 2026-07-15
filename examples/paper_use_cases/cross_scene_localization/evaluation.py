@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 import torch
 from tqdm import tqdm
 
-from .config import BLOCK2_ROOT, BLOCK_ROOT, CROP_SIZE, CROP_U_MAX, CROP_U_MIN, IMG_H, SQUARE_ROOT
+from .config import BLOCK_ROOT, CROP_SIZE, CROP_U_MAX, CROP_U_MIN, IMG_H, SQUARE_ROOT
 from .decoding import decode_heatmaps_local, decode_heatmaps_topk_local
 from .geometry import img_to_raw_uv, load_camera_pose, ray_range_to_world
 from .lidar import associate_lidar_range
@@ -326,8 +326,6 @@ def make_prediction_montage(details: pd.DataFrame, out_path: str, max_images: in
         scene = str(r["scene"])
         if scene == "Block_1":
             root = BLOCK_ROOT
-        elif scene == "Block_2":
-            root = BLOCK2_ROOT
         else:
             root = SQUARE_ROOT
         fid = str(r["fid"]).zfill(6)

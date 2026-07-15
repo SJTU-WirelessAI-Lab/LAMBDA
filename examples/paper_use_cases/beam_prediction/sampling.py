@@ -182,7 +182,7 @@ def few_shot_finetune_deepsense(
     lr_milestones: Sequence[int] = (4, 8, 12),
     lr_gamma: float = 0.1,
     optimizer_name: str = "adamw",
-    checkpoint_stem: str = "rgb60_resnet18",
+    checkpoint_stem: str = "rgb60_resnet50_paper",
     save_dir: Optional[Path] = None,
 ) -> Dict[str, Dict[str, float]]:
     labels = np.asarray(getattr(deepsense_eval_fixed, "labels"), dtype=np.int64)
