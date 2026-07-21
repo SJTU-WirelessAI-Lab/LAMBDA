@@ -135,8 +135,8 @@ python -m lambda_rf mimo-ofdm-csi \
   --array-model spherical-wave
 ```
 
-Generate FMCW radar raw cubes from released 28 GHz path-level CSI. Frequency-
-matched AirSim default-drone FEKO models are bundled for 28 and 77 GHz:
+Generate FMCW radar raw cubes from released path-level CSI. Frequency-matched
+AirSim default-drone FEKO models are bundled for 28, 60, and 77 GHz:
 
 ```bash
 python -m lambda_rf radar \
@@ -151,8 +151,9 @@ python -m lambda_rf radar \
 `--idle-time` to specify only the gap after each chirp. Radar also accepts
 `--array-model spherical-wave` to use per-radar-antenna near-field delays from
 the same `path_vertices` and `path_interaction_count` fields used by MIMO OFDM
-CSI. Theta-linear incidence uses coherent `E_theta`; unsupported radar bands,
-including 60 GHz, fail until a matching RCS H5 is provided.
+CSI. Theta-linear incidence uses coherent `E_theta`; unsupported radar bands
+fail before synthesis unless an explicit frequency-matched `--rcs-model` is
+provided.
 
 Render Range-Doppler, Range-Azimuth, and Range-Elevation images:
 

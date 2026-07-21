@@ -20,6 +20,7 @@ from lambda_rf.utils.array_csi import (
 C_M_S = 299_792_458.0
 DEFAULT_RCS_MODEL_FILENAMES = {
     28.0e9: "default_drone_rcs_28ghz.h5",
+    60.0e9: "default_drone_rcs_60ghz.h5",
     77.0e9: "default_drone_rcs_77ghz.h5",
 }
 RCS_FREQUENCY_TOLERANCE_HZ = 1.0e6

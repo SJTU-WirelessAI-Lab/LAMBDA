@@ -21,6 +21,7 @@ from lambda_rf.utils.radar import (
 from lambda_rf.visualize_radar import compute_radar_maps
 
 RCS_28_PATH = Path(config.SERVER_ROOT) / "assets" / "default_drone_rcs_28ghz.h5"
+RCS_60_PATH = Path(config.SERVER_ROOT) / "assets" / "default_drone_rcs_60ghz.h5"
 RCS_77_PATH = Path(config.SERVER_ROOT) / "assets" / "default_drone_rcs_77ghz.h5"
 
 
@@ -42,6 +43,7 @@ class RadarUtilityTest(unittest.TestCase):
 
     def test_default_rcs_asset_is_bundled(self):
         self.assertTrue(RCS_28_PATH.is_file())
+        self.assertTrue(RCS_60_PATH.is_file())
         self.assertTrue(RCS_77_PATH.is_file())
 
     @unittest.skipIf(importlib.util.find_spec("h5py") is None, "h5py is not installed")
@@ -56,12 +58,15 @@ class RadarUtilityTest(unittest.TestCase):
 
     @unittest.skipIf(importlib.util.find_spec("h5py") is None, "h5py is not installed")
     def test_rcs_frequency_mismatch_and_unsupported_band_fail(self):
+        model_60 = H5RCSModel(RCS_60_PATH, expected_frequency_hz=60.0e9)
+        self.assertTrue(np.isfinite(model_60.get_rcs(0.0, 0.0)))
+        self.assertEqual(resolve_rcs_model_path(60.0e9, Path(config.SERVER_ROOT) / "assets"), RCS_60_PATH)
         model_77 = H5RCSModel(RCS_77_PATH, expected_frequency_hz=77.0e9)
         self.assertTrue(np.isfinite(model_77.get_rcs(0.0, 0.0)))
         with self.assertRaisesRegex(ValueError, "does not match"):
             H5RCSModel(RCS_28_PATH, expected_frequency_hz=77.0e9)
         with self.assertRaisesRegex(ValueError, "No calibrated drone RCS model"):
-            resolve_rcs_model_path(60.0e9, Path(config.SERVER_ROOT) / "assets")
+            resolve_rcs_model_path(5.9e9, Path(config.SERVER_ROOT) / "assets")
 
     def test_radar_equation_amplitude_normalization(self):
         frequency = 28.0e9

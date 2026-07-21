@@ -167,6 +167,7 @@ OUTPUT_ROOT = str(Path(_expand_path(str(_CFG.get("output_root", "${SERVER_ROOT}/
 TX_POSE_PATH = _optional_path("tx_pose_path")
 RCS_MODEL_PATHS = {
     28.0e9: str((ASSETS_ROOT / "default_drone_rcs_28ghz.h5").resolve()),
+    60.0e9: str((ASSETS_ROOT / "default_drone_rcs_60ghz.h5").resolve()),
     77.0e9: str((ASSETS_ROOT / "default_drone_rcs_77ghz.h5").resolve()),
 }
 RCS_MODEL_PATH = RCS_MODEL_PATHS.get(float(_CFG.get("carrier_frequency", 28.0e9)), "")

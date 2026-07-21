@@ -188,12 +188,14 @@ FEKO model from:
 
 ```text
 assets/default_drone_rcs_28ghz.h5
+assets/default_drone_rcs_60ghz.h5
 assets/default_drone_rcs_77ghz.h5
 ```
 
 The FEKO excitation is theta-linear. The default co-polar response is the
 complex `E_theta` field, with `sigma_theta=4*pi*|E_theta|^2`. A radar carrier
-without a matching H5, including 60 GHz, is rejected before synthesis.
+without a matching H5 is rejected before synthesis unless an explicit
+frequency-matched `--rcs-model` is provided.
 
 Install radar dependencies first:
 
@@ -218,7 +220,12 @@ The same defaults can be stored under `common.radar` in
 The default 28 GHz profile uses a 1 GHz sweep, 100 MHz complex ADC rate, 40 us
 ramp, 50 us PRI, 128 chirps, and a 4x4 array at 0.49 center wavelengths. This
 gives approximately 0.15 m range resolution, 300 m positive-beat unambiguous
-range, 0.84 m/s velocity resolution, and 53.5 m/s unambiguous speed.
+range, 0.84 m/s velocity resolution, and 53.5 m/s unambiguous speed. With
+`noise_floor_dbm=null`, the 100 MHz/6 dB thermal noise floor is -88 dBm.
+The same FMCW defaults can be used at 60 GHz; range metrics are unchanged for
+the same sweep and sample rate, while velocity resolution becomes about
+0.39 m/s and unambiguous speed about 25.0 m/s because they scale with
+wavelength.
 
 Useful options:
 

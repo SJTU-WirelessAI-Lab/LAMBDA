@@ -218,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     noise_group = radar_cmd.add_mutually_exclusive_group()
     noise_group.add_argument("--add-noise", dest="add_noise", action="store_true", default=None, help="Add complex Gaussian receiver noise.")
     noise_group.add_argument("--no-noise", dest="add_noise", action="store_false", help="Disable receiver noise.")
-    radar_cmd.add_argument("--rcs-model", help="Explicit frequency-matched FEKO H5 model. Defaults to the bundled 28/77 GHz model.")
+    radar_cmd.add_argument("--rcs-model", help="Explicit frequency-matched FEKO H5 model. Defaults to the bundled 28/60/77 GHz model.")
     radar_cmd.add_argument(
         "--rcs-component",
         choices=["theta", "phi"],
